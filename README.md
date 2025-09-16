@@ -18,7 +18,7 @@ A SourceMod plugin that allows players to store and switch between two primary w
 
 ## ⚠️Take note
 
-During map change, the weapon state will reset. Still figuring out how to solve this problem. Feel free to experiment on this as well.
+During map change, the weapon state will reset (your second primary weapon will be removed) so you have to pick again your 2nd primary weapon. Still figuring out how to solve this problem. Feel free to experiment on this as well.
 
 ## Installation
 
