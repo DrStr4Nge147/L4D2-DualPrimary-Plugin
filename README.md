@@ -14,7 +14,7 @@ A SourceMod plugin that allows players to store and switch between two primary w
 
 ## Video Demonstration
 
-[![Watch the video](https://img.youtube.com/vi/VtSq4Bn-Kos/hqdefault.jpg)]([https://youtu.be/VtSq4Bn-Kos](https://www.youtube.com/watch?v=VtSq4Bn-Kos))
+[![Watch the video](https://img.youtube.com/vi/VtSq4Bn-Kos/hqdefault.jpg)](https://www.youtube.com/watch?v=VtSq4Bn-Kos))
 
 ## ⚠️Take note
 
