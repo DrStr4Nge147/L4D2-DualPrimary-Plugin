@@ -24,6 +24,11 @@ enum struct WeaponState
 WeaponState g_PrimarySlot1[MAX_PLAYERS];
 WeaponState g_PrimarySlot2[MAX_PLAYERS];
 
+// Global variables for tracking
+char g_LastWeapon[MAX_PLAYERS][64];
+int g_LastAmmo[MAX_PLAYERS];
+bool g_IsWeaponSwitching[MAX_PLAYERS];
+
 // ConVars for toggles
 ConVar g_cvDebugMode;
 ConVar g_cvChatHints;
@@ -52,6 +57,9 @@ public void OnPluginStart()
     HookEvent("item_pickup", Event_ItemPickup);
     HookEvent("weapon_pickup", Event_WeaponPickup);
     
+    // Create a timer to check for ammo changes since ammo_pickup event doesn't exist in L4D2
+    CreateTimer(0.5, Timer_CheckAmmoChanges, _, TIMER_REPEAT);
+    
     // Create a timer to periodically check for weapon changes
     CreateTimer(1.0, Timer_CheckWeaponChanges, _, TIMER_REPEAT);
     
@@ -63,6 +71,8 @@ public void OnClientPutInServer(int client)
 {
     ClearWeaponState(g_PrimarySlot1[client]);
     ClearWeaponState(g_PrimarySlot2[client]);
+    g_LastAmmo[client] = -1;
+    g_IsWeaponSwitching[client] = false;
 }
 
 void ClearWeaponState(WeaponState weapon)
@@ -204,7 +214,6 @@ public void Event_WeaponPickup(Event event, const char[] name, bool dontBroadcas
 // ----------------------
 // PERIODIC WEAPON CHECK
 // ----------------------
-char g_LastWeapon[MAX_PLAYERS][64];
 
 public Action Timer_CheckWeaponChanges(Handle timer)
 {
@@ -240,6 +249,53 @@ public Action Timer_CheckWeaponChanges(Handle timer)
             
             strcopy(g_LastWeapon[client], sizeof(g_LastWeapon[]), currentWeapon);
         }
+    }
+    
+    return Plugin_Continue;
+}
+
+public Action Timer_CheckAmmoChanges(Handle timer)
+{
+    for (int client = 1; client <= MaxClients; client++)
+    {
+        if (!IsClientInGame(client) || !IsPlayerAlive(client))
+            continue;
+            
+        int weapon = GetPlayerWeaponSlot(client, 0);
+        if (weapon <= 0 || !IsValidEntity(weapon))
+            continue;
+            
+        char currentWeapon[64];
+        GetEntityClassname(weapon, currentWeapon, sizeof(currentWeapon));
+        
+        if (!IsPrimaryWeapon(currentWeapon))
+            continue;
+            
+        // Get current ammo
+        int ammoType = GetEntProp(weapon, Prop_Send, "m_iPrimaryAmmoType");
+        if (ammoType < 0) continue;
+        
+        int currentAmmo = GetEntProp(client, Prop_Send, "m_iAmmo", _, ammoType);
+        
+        // Debug current ammo tracking
+        if (g_cvDebugMode.BoolValue && g_LastAmmo[client] != currentAmmo)
+            PrintToChat(client, "[DEBUG] Ammo change: %d -> %d for %s (switching: %s)", g_LastAmmo[client], currentAmmo, currentWeapon, g_IsWeaponSwitching[client] ? "yes" : "no");
+        
+        // Check if ammo increased (indicating pickup) but not during weapon switching
+        if (g_LastAmmo[client] != -1 && currentAmmo > g_LastAmmo[client] && !g_IsWeaponSwitching[client])
+        {
+            if (g_cvDebugMode.BoolValue)
+                PrintToChat(client, "[DEBUG] Ammo increase detected: %d -> %d (not switching)", g_LastAmmo[client], currentAmmo);
+            
+            // Replenish ammo for both stored primary weapons
+            ReplenishBothPrimaryWeapons(client);
+        }
+        else if (g_IsWeaponSwitching[client] && g_cvDebugMode.BoolValue)
+        {
+            PrintToChat(client, "[DEBUG] Ammo change ignored during weapon switching");
+        }
+        
+        g_LastAmmo[client] = currentAmmo;
     }
     
     return Plugin_Continue;
@@ -337,6 +393,9 @@ public Action Cmd_SwitchPrimary(int client, int args)
         return Plugin_Handled;
     }
 
+    // Mark that we're switching weapons to prevent ammo replenishment
+    g_IsWeaponSwitching[client] = true;
+    
     // Save current weapon state
     int currentWeapon = GetPlayerWeaponSlot(client, 0);
     WeaponState tempState;
@@ -374,6 +433,9 @@ public Action Cmd_SwitchPrimary(int client, int args)
         if (g_cvChatHints.BoolValue)
             PrintToChat(client, "[DualPrimaries] Failed to restore weapon state.");
     }
+
+    // Clear the switching flag after a short delay to allow weapon switch to complete
+    CreateTimer(1.0, Timer_ClearSwitchingFlag, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
     return Plugin_Handled;
 }
@@ -516,6 +578,206 @@ public Action Cmd_PrimaryStatus_Server(int args)
     }
     
     return Cmd_PrimaryStatus(client, 0);
+}
+
+// ----------------------
+// AMMO REPLENISHMENT
+// ----------------------
+
+void ReplenishBothPrimaryWeapons(int client)
+{
+    int currentWeapon = GetPlayerWeaponSlot(client, 0);
+    if (currentWeapon <= 0 || !IsValidEntity(currentWeapon)) 
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] No valid current weapon");
+        return;
+    }
+    
+    char currentClassname[64];
+    GetEntityClassname(currentWeapon, currentClassname, sizeof(currentClassname));
+    
+    if (!IsPrimaryWeapon(currentClassname)) 
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Current weapon %s is not primary", currentClassname);
+        return;
+    }
+    
+    // Get the current weapon's ammo type and current ammo amount
+    int currentAmmoType = GetEntProp(currentWeapon, Prop_Send, "m_iPrimaryAmmoType");
+    if (currentAmmoType < 0) 
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Invalid ammo type: %d", currentAmmoType);
+        return;
+    }
+    
+    int currentAmmo = GetEntProp(client, Prop_Send, "m_iAmmo", _, currentAmmoType);
+    
+    if (g_cvDebugMode.BoolValue)
+        PrintToChat(client, "[DEBUG] Current weapon: %s, AmmoType: %d, Ammo: %d", currentClassname, currentAmmoType, currentAmmo);
+    
+    bool slot1Updated = false, slot2Updated = false;
+    
+    // Update stored weapon states with the new ammo amount
+    if (g_PrimarySlot1[client].isValid)
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Slot1: %s, replenishing ammo", g_PrimarySlot1[client].classname);
+        
+        // Get the appropriate ammo amount for slot 1 weapon's ammo type
+        int slot1AmmoType = GetWeaponAmmoType(g_PrimarySlot1[client].classname);
+        int slot1Ammo = (slot1AmmoType == currentAmmoType) ? currentAmmo : GetEntProp(client, Prop_Send, "m_iAmmo", _, slot1AmmoType);
+        
+        // If slot1 uses different ammo type, set it to max ammo for that type
+        if (slot1AmmoType != currentAmmoType)
+        {
+            slot1Ammo = GetMaxAmmoForWeapon(g_PrimarySlot1[client].classname);
+        }
+        else
+        {
+            slot1Ammo = currentAmmo;
+        }
+        
+        g_PrimarySlot1[client].ammo = slot1Ammo;
+        slot1Updated = true;
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Updated slot 1 (%s) ammo to %d", g_PrimarySlot1[client].classname, slot1Ammo);
+    }
+    else if (g_cvDebugMode.BoolValue)
+    {
+        PrintToChat(client, "[DEBUG] Slot1 is empty");
+    }
+    
+    if (g_PrimarySlot2[client].isValid)
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Slot2: %s, replenishing ammo", g_PrimarySlot2[client].classname);
+        
+        // Get the appropriate ammo amount for slot 2 weapon's ammo type
+        int slot2AmmoType = GetWeaponAmmoType(g_PrimarySlot2[client].classname);
+        int slot2Ammo = (slot2AmmoType == currentAmmoType) ? currentAmmo : GetEntProp(client, Prop_Send, "m_iAmmo", _, slot2AmmoType);
+        
+        // If slot2 uses different ammo type, set it to max ammo for that type
+        if (slot2AmmoType != currentAmmoType)
+        {
+            slot2Ammo = GetMaxAmmoForWeapon(g_PrimarySlot2[client].classname);
+        }
+        else
+        {
+            slot2Ammo = currentAmmo;
+        }
+        
+        g_PrimarySlot2[client].ammo = slot2Ammo;
+        slot2Updated = true;
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Updated slot 2 (%s) ammo to %d", g_PrimarySlot2[client].classname, slot2Ammo);
+    }
+    else if (g_cvDebugMode.BoolValue)
+    {
+        PrintToChat(client, "[DEBUG] Slot2 is empty");
+    }
+    
+    if (g_cvChatHints.BoolValue && (slot1Updated || slot2Updated))
+        PrintToChat(client, "[DualPrimaries] Ammo replenished for %s%s%s.", 
+            slot1Updated ? "slot 1" : "",
+            (slot1Updated && slot2Updated) ? " and " : "",
+            slot2Updated ? "slot 2" : "");
+}
+
+int GetWeaponAmmoType(const char[] weaponClassname)
+{
+    // Return the ammo type for a given weapon
+    if (StrContains(weaponClassname, "rifle", false) != -1 ||
+        StrEqual(weaponClassname, "weapon_rifle", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_ak47", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_desert", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_sg552", false) ||
+        StrEqual(weaponClassname, "weapon_m60", false))
+    {
+        return 3; // Rifle ammo
+    }
+    else if (StrContains(weaponClassname, "smg", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_smg", false) ||
+             StrEqual(weaponClassname, "weapon_smg_silenced", false) ||
+             StrEqual(weaponClassname, "weapon_smg_mp5", false))
+    {
+        return 5; // SMG ammo
+    }
+    else if (StrContains(weaponClassname, "shotgun", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_shotgun_chrome", false) ||
+             StrEqual(weaponClassname, "weapon_shotgun_spas", false) ||
+             StrEqual(weaponClassname, "weapon_autoshotgun", false) ||
+             StrEqual(weaponClassname, "weapon_pumpshotgun", false))
+    {
+        return 7; // Shotgun ammo
+    }
+    else if (StrContains(weaponClassname, "sniper", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_sniper_military", false) ||
+             StrEqual(weaponClassname, "weapon_hunting_rifle", false))
+    {
+        return 9; // Sniper ammo
+    }
+    
+    return -1; // Unknown weapon
+}
+
+int GetMaxAmmoForWeapon(const char[] weaponClassname)
+{
+    // Return max ammo for different weapon types
+    if (StrContains(weaponClassname, "rifle", false) != -1 ||
+        StrEqual(weaponClassname, "weapon_rifle", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_ak47", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_desert", false) ||
+        StrEqual(weaponClassname, "weapon_rifle_sg552", false))
+    {
+        return 360; // Rifle max ammo
+    }
+    else if (StrEqual(weaponClassname, "weapon_m60", false))
+    {
+        return 150; // M60 max ammo
+    }
+    else if (StrContains(weaponClassname, "smg", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_smg", false) ||
+             StrEqual(weaponClassname, "weapon_smg_silenced", false) ||
+             StrEqual(weaponClassname, "weapon_smg_mp5", false))
+    {
+        return 650; // SMG max ammo
+    }
+    else if (StrContains(weaponClassname, "shotgun", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_shotgun_chrome", false) ||
+             StrEqual(weaponClassname, "weapon_shotgun_spas", false) ||
+             StrEqual(weaponClassname, "weapon_autoshotgun", false) ||
+             StrEqual(weaponClassname, "weapon_pumpshotgun", false))
+    {
+        return 72; // Shotgun max ammo
+    }
+    else if (StrContains(weaponClassname, "sniper", false) != -1 ||
+             StrEqual(weaponClassname, "weapon_sniper_military", false) ||
+             StrEqual(weaponClassname, "weapon_hunting_rifle", false))
+    {
+        return 180; // Sniper max ammo
+    }
+    
+    return 100; // Default fallback
+}
+
+public Action Timer_ClearSwitchingFlag(Handle timer, int userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (client > 0 && client <= MaxClients && IsClientInGame(client))
+    {
+        g_IsWeaponSwitching[client] = false;
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Weapon switching flag cleared");
+    }
+    return Plugin_Stop;
+}
+
+bool DoesWeaponUseAmmoType(const char[] weaponClassname, int ammoType)
+{
+    return GetWeaponAmmoType(weaponClassname) == ammoType;
 }
 
 bool IsPrimaryWeapon(const char[] classname)
