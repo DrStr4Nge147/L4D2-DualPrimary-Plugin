@@ -12,6 +12,10 @@ A SourceMod plugin that allows players to store and switch between two primary w
 - **Key Binding Support**: Bind weapon switching to any key
 - **Multiple Command Types**: Chat, console, and server commands available
 
+## Video Demonstration
+
+[![Watch the video](https://img.youtube.com/vi/VtSq4Bn-Kos/maxresdefault.jpg)]([https://youtu.be/VtSq4Bn-Kos])
+
 ## Installation
 
 1. **Download**: Place `dual_primaries.smx` in your `addons/sourcemod/plugins/` folder
