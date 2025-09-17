@@ -22,6 +22,10 @@ A SourceMod plugin that allows players to store and switch between two primary w
 2. **Restart**: Restart your server or use `sm plugins load dual_primaries`
 3. **Configure**: Edit the auto-generated config file at `cfg/sourcemod/dualprimary.cfg`
 
+## ⚠️Take Note
+
+Not working well when you have ammo upgrades (explosive/incendiary). So you better not switch your primary weapons when you have active explosive/incendiary ammo from your equipped weapon.
+
 ## Commands
 
 ### Chat Commands
