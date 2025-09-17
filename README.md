@@ -48,15 +48,15 @@ A SourceMod plugin that allows players to store and switch between two primary w
 
 ### Recommended Binds
 ```
-bind "q" "sm_switchprimary_server 1"
-bind "f" "sm_storeprimary_server 1"
-bind "g" "sm_primarystatus_server 1"
+bind "<key>" "sm_switchprimary_server 1"
+bind "<key>" "sm_storeprimary_server 1"
+bind "<key>" "sm_primarystatus_server 1"
 ```
 
 ### Alternative Binds
 ```
-bind "q" "switchprimary"
-bind "f" "storeprimary"
+bind "<key>" "switchprimary"
+bind "<key>" "storeprimary"
 ```
 
 **Note**: Server commands (`sm_*_server`) tend to work more reliably for key binds.
@@ -71,6 +71,7 @@ The plugin creates a config file at `cfg/sourcemod/dualprimary.cfg` with these s
 |--------|---------|-------------|
 | `sm_dualprimary_debug` | `0` | Enable debug output (0=disabled, 1=enabled) |
 | `sm_dualprimary_hints` | `1` | Enable chat hints (0=disabled, 1=enabled) |
+| `sm_dualprimary_allow_duplicates` | `0` | Allow duplicate primary weapons (0=disabled, 1=enabled) |
 
 ### Configuration Examples
 
@@ -78,18 +79,28 @@ The plugin creates a config file at `cfg/sourcemod/dualprimary.cfg` with these s
 ```
 sm_dualprimary_debug 0     // No debug spam
 sm_dualprimary_hints 1     // Show weapon pickup messages
+sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
+```
+
+**Classic Mode (Original Behavior)**:
+```
+sm_dualprimary_debug 0
+sm_dualprimary_hints 1
+sm_dualprimary_allow_duplicates 1  // Allow duplicate weapons
 ```
 
 **Silent Mode**:
 ```
 sm_dualprimary_debug 0     // No debug output
 sm_dualprimary_hints 0     // No chat messages at all
+sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
 ```
 
 **Debug Mode**:
 ```
 sm_dualprimary_debug 1     // Show technical debug info
 sm_dualprimary_hints 1     // Show normal messages too
+sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
 ```
 
 ## How It Works
@@ -98,6 +109,13 @@ sm_dualprimary_hints 1     // Show normal messages too
 1. **First Weapon**: Gets stored in Slot 1
 2. **Second Weapon**: Previous weapon moves to Slot 2, new weapon goes to Slot 1
 3. **Third Weapon**: Only replaces Slot 1 (Slot 2 stays protected)
+
+### Duplicate Weapon Restriction
+When `sm_dualprimary_allow_duplicates` is set to `0` (recommended):
+- Players cannot have the same weapon in both slots
+- Attempting to pick up a duplicate weapon is blocked
+- Switching to a weapon that would create a duplicate clears the second slot
+- Players receive a message when duplicate weapons are blocked
 
 ### Manual Storage
 - Use `!storeprimary` to manually store your current weapon in Slot 2
@@ -167,6 +185,11 @@ The plugin works with all L4D2 primary weapons:
 
 ### No Automatic Storage
 - Check if you're picking up primary weapons (not pistols/melee)
+
+### Duplicate Weapons Not Blocked
+- Verify `sm_dualprimary_allow_duplicates` is set to `0`
+- Check for any conflicting plugins that might modify weapon behavior
+- Ensure you're using the latest version of the plugin
 - Enable debug mode: `sm_dualprimary_debug 1`
 - Check console for error messages
 
