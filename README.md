@@ -16,10 +16,6 @@ A SourceMod plugin that allows players to store and switch between two primary w
 
 [![Watch the video](https://img.youtube.com/vi/VtSq4Bn-Kos/hqdefault.jpg)](https://www.youtube.com/watch?v=VtSq4Bn-Kos))
 
-## ⚠️Take note
-
-During map change, the weapon state will reset (your second primary weapon will be removed) so you have to pick again your 2nd primary weapon. Still figuring out how to solve this problem. Feel free to experiment on this as well.
-
 ## Installation
 
 1. **Download**: Place `dual_primaries.smx` in your `addons/sourcemod/plugins/` folder
