@@ -5,8 +5,10 @@
 
 #include <sourcemod>
 #include <sdktools>
+#include <keyvalues>
 
 #define MAX_PLAYERS 33
+#define CONFIG_PATH "data/dualprimaries_weapons.cfg"
 
 // Weapon state structure
 enum struct WeaponState
@@ -33,6 +35,11 @@ bool g_IsWeaponSwitching[MAX_PLAYERS];
 ConVar g_cvDebugMode;
 ConVar g_cvChatHints;
 
+// Campaign and round tracking
+bool g_IsCampaignRestart = false;
+int g_RoundRestartCount = 0;
+int g_LastRoundRestartTime = 0;
+
 public void OnPluginStart()
 {
     // Create ConVars for toggles
@@ -57,6 +64,14 @@ public void OnPluginStart()
     HookEvent("item_pickup", Event_ItemPickup);
     HookEvent("weapon_pickup", Event_WeaponPickup);
     
+    // Hook round and campaign events
+    HookEvent("round_start", Event_RoundStart);
+    HookEvent("round_end", Event_RoundEnd);
+    HookEvent("map_transition", Event_MapTransition);
+    HookEvent("finale_win", Event_FinaleWin);
+    HookEvent("mission_lost", Event_MissionLost);
+    HookEvent("player_death", Event_PlayerDeath);
+    
     // Create a timer to check for ammo changes since ammo_pickup event doesn't exist in L4D2
     CreateTimer(0.5, Timer_CheckAmmoChanges, _, TIMER_REPEAT);
     
@@ -65,14 +80,62 @@ public void OnPluginStart()
     
     // Auto-generate config file
     AutoExecConfig(true, "dualprimary");
+    
+    // Create data directory if it doesn't exist
+    if (!DirExists("data"))
+    {
+        CreateDirectory("data", 511);
+    }
 }
 
 public void OnClientPutInServer(int client)
 {
-    ClearWeaponState(g_PrimarySlot1[client]);
-    ClearWeaponState(g_PrimarySlot2[client]);
+    // Load from config if:
+    // 1. Config file exists AND
+    // 2. It's not a campaign restart AND
+    // 3. We haven't detected multiple rapid restarts recently
+    if (FileExists(CONFIG_PATH) && !g_IsCampaignRestart && g_RoundRestartCount < 2)
+    {
+        // Delay loading slightly to ensure client is fully connected
+        DataPack pack = new DataPack();
+        pack.WriteCell(GetClientUserId(client));
+        CreateTimer(0.5, Timer_LoadWeaponState, pack, TIMER_FLAG_NO_MAPCHANGE);
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Will load weapon state from config");
+    }
+    else
+    {
+        ClearWeaponState(g_PrimarySlot1[client]);
+        ClearWeaponState(g_PrimarySlot2[client]);
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Clean slate - no config loading (Campaign restart: %s, Restart count: %d)", 
+                g_IsCampaignRestart ? "Yes" : "No", g_RoundRestartCount);
+    }
     g_LastAmmo[client] = -1;
     g_IsWeaponSwitching[client] = false;
+}
+
+public void OnMapStart()
+{
+    // Don't immediately reset campaign restart flag - let it persist for a bit
+    // Only reset if it's been more than 10 seconds since last round restart
+    int currentTime = GetTime();
+    if (currentTime - g_LastRoundRestartTime > 10)
+    {
+        g_IsCampaignRestart = false;
+        g_RoundRestartCount = 0;
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Map started - reset campaign restart flags (clean transition)");
+    }
+    else
+    {
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Map started - keeping campaign restart flags (recent restart detected)");
+    }
+    
+    // g_IsMapTransition is no longer used - we rely on config file existence instead
 }
 
 void ClearWeaponState(WeaponState weapon)
@@ -339,6 +402,9 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     if (g_cvChatHints.BoolValue)
         PrintToChat(client, "[DualPrimaries] Equipped %s in slot 1.", currentClassname);
     
+    // Save to config file in real-time
+    SavePlayerWeaponStateToConfig(client);
+    
     return Plugin_Stop;
 }
 
@@ -366,8 +432,109 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
         {
             SaveWeaponState(weapon, g_PrimarySlot2[client]);
             PrintToChat(client, "[DualPrimaries] Stored %s in slot 2.", classname);
+            
+            // Save to config file in real-time
+            SavePlayerWeaponStateToConfig(client);
         }
     }
+}
+
+// ----------------------
+// CAMPAIGN/ROUND EVENTS
+// ----------------------
+public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
+{
+    int currentTime = GetTime();
+    
+    // Check if this is a quick restart (within 8 seconds of last restart for more reliability)
+    if (currentTime - g_LastRoundRestartTime < 8)
+    {
+        g_RoundRestartCount++;
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Quick round restart detected (count: %d, time diff: %d sec)", 
+                g_RoundRestartCount, currentTime - g_LastRoundRestartTime);
+    }
+    else
+    {
+        // Reset count if it's been a while
+        g_RoundRestartCount = 1;
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] New round started (time diff: %d sec)", 
+                currentTime - g_LastRoundRestartTime);
+    }
+    
+    g_LastRoundRestartTime = currentTime;
+    
+    // If multiple quick restarts OR if there's no config file and this is a restart, it's likely a campaign restart
+    if (g_RoundRestartCount >= 2 || (!FileExists(CONFIG_PATH) && g_RoundRestartCount > 1))
+    {
+        g_IsCampaignRestart = true;
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Campaign restart detected - clearing weapon states (restarts: %d, config exists: %s)", 
+                g_RoundRestartCount, FileExists(CONFIG_PATH) ? "Yes" : "No");
+        
+        // Clear all weapon states for campaign restart
+        for (int i = 1; i <= MaxClients; i++)
+        {
+            if (IsClientInGame(i))
+            {
+                ClearWeaponState(g_PrimarySlot1[i]);
+                ClearWeaponState(g_PrimarySlot2[i]);
+            }
+        }
+        
+        // Delete the config file on campaign restart
+        DeleteConfigFile();
+    }
+    else if (g_cvDebugMode.BoolValue)
+    {
+        PrintToServer("[DualPrimaries] Normal round start - not a campaign restart");
+    }
+}
+
+public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
+{
+    // No longer saving at round end - now done in real-time
+}
+
+public void Event_MapTransition(Event event, const char[] name, bool dontBroadcast)
+{
+    // We no longer need to set g_IsMapTransition since we use file existence instead
+    g_IsCampaignRestart = false; // Reset campaign restart flag for map transitions
+    if (g_cvDebugMode.BoolValue)
+        PrintToServer("[DualPrimaries] Map transition detected");
+}
+
+public void Event_FinaleWin(Event event, const char[] name, bool dontBroadcast)
+{
+    // Clear weapon states and config file when campaign is completed
+    DeleteConfigFile();
+    if (g_cvDebugMode.BoolValue)
+        PrintToServer("[DualPrimaries] Campaign completed - cleared weapon states");
+}
+
+public void Event_MissionLost(Event event, const char[] name, bool dontBroadcast)
+{
+    // This is typically a wipe/restart scenario
+    g_IsCampaignRestart = true;
+    if (g_cvDebugMode.BoolValue)
+        PrintToServer("[DualPrimaries] Mission lost - marking as campaign restart");
+}
+
+public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
+{
+    int client = GetClientOfUserId(event.GetInt("userid"));
+    if (client <= 0 || !IsClientInGame(client)) return;
+    
+    // Player death clears their weapon states (as intended - working correctly)
+    ClearWeaponState(g_PrimarySlot1[client]);
+    ClearWeaponState(g_PrimarySlot2[client]);
+    
+    // Save cleared state to config file in real-time
+    SavePlayerWeaponStateToConfig(client);
+    
+    if (g_cvDebugMode.BoolValue)
+        PrintToChat(client, "[DEBUG] Weapon states cleared due to death");
 }
 
 // ----------------------
@@ -427,6 +594,9 @@ public Action Cmd_SwitchPrimary(int client, int args)
                 g_PrimarySlot1[client].hasLaser ? "L" : "",
                 g_PrimarySlot1[client].hasIncendiary ? "I" : "",
                 g_PrimarySlot1[client].hasExplosive ? "E" : "");
+        
+        // Save to config file in real-time
+        SavePlayerWeaponStateToConfig(client);
     }
     else
     {
@@ -468,6 +638,9 @@ public Action Cmd_StorePrimary(int client, int args)
     SaveWeaponState(weapon, g_PrimarySlot2[client]);
     if (g_cvChatHints.BoolValue)
         PrintToChat(client, "[DualPrimaries] Manually stored %s in slot 2.", classname);
+    
+    // Save to config file in real-time
+    SavePlayerWeaponStateToConfig(client);
     
     return Plugin_Handled;
 }
@@ -684,6 +857,12 @@ void ReplenishBothPrimaryWeapons(int client)
             slot1Updated ? "slot 1" : "",
             (slot1Updated && slot2Updated) ? " and " : "",
             slot2Updated ? "slot 2" : "");
+    
+    // Save to config file in real-time if any ammo was updated
+    if (slot1Updated || slot2Updated)
+    {
+        SavePlayerWeaponStateToConfig(client);
+    }
 }
 
 int GetWeaponAmmoType(const char[] weaponClassname)
@@ -775,9 +954,181 @@ public Action Timer_ClearSwitchingFlag(Handle timer, int userid)
     return Plugin_Stop;
 }
 
-bool DoesWeaponUseAmmoType(const char[] weaponClassname, int ammoType)
+public Action Timer_LoadWeaponState(Handle timer, DataPack pack)
 {
-    return GetWeaponAmmoType(weaponClassname) == ammoType;
+    pack.Reset();
+    int userid = pack.ReadCell();
+    delete pack;
+    
+    int client = GetClientOfUserId(userid);
+    if (client <= 0 || !IsClientInGame(client))
+        return Plugin_Stop;
+    
+    LoadWeaponStateFromConfig(client);
+    
+    if (g_cvDebugMode.BoolValue)
+        PrintToChat(client, "[DEBUG] Delayed weapon state load completed");
+    
+    return Plugin_Stop;
+}
+
+
+// ----------------------
+// CONFIG FILE FUNCTIONS
+// ----------------------
+
+void SavePlayerWeaponStateToConfig(int client)
+{
+    if (client <= 0 || !IsClientInGame(client))
+        return;
+        
+    char steamId[64];
+    if (!GetClientAuthId(client, AuthId_Steam2, steamId, sizeof(steamId)))
+        return;
+    
+    KeyValues kv = new KeyValues("DualPrimariesConfig");
+    
+    // Load existing config if it exists
+    if (FileExists(CONFIG_PATH))
+    {
+        kv.ImportFromFile(CONFIG_PATH);
+    }
+    
+    // Navigate to or create the player's section
+    kv.JumpToKey(steamId, true);
+    
+    // Clear existing data for this player
+    kv.DeleteKey("Slot1");
+    kv.DeleteKey("Slot2");
+    
+    // Save slot 1 if valid
+    if (g_PrimarySlot1[client].isValid)
+    {
+        kv.JumpToKey("Slot1", true);
+        kv.SetString("classname", g_PrimarySlot1[client].classname);
+        kv.SetNum("clip", g_PrimarySlot1[client].clip);
+        kv.SetNum("ammo", g_PrimarySlot1[client].ammo);
+        kv.SetNum("upgrades", g_PrimarySlot1[client].upgrades);
+        kv.SetNum("hasLaser", g_PrimarySlot1[client].hasLaser ? 1 : 0);
+        kv.SetNum("hasIncendiary", g_PrimarySlot1[client].hasIncendiary ? 1 : 0);
+        kv.SetNum("hasExplosive", g_PrimarySlot1[client].hasExplosive ? 1 : 0);
+        kv.GoBack();
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Saved slot 1 to config: %s", g_PrimarySlot1[client].classname);
+    }
+    
+    // Save slot 2 if valid
+    if (g_PrimarySlot2[client].isValid)
+    {
+        kv.JumpToKey("Slot2", true);
+        kv.SetString("classname", g_PrimarySlot2[client].classname);
+        kv.SetNum("clip", g_PrimarySlot2[client].clip);
+        kv.SetNum("ammo", g_PrimarySlot2[client].ammo);
+        kv.SetNum("upgrades", g_PrimarySlot2[client].upgrades);
+        kv.SetNum("hasLaser", g_PrimarySlot2[client].hasLaser ? 1 : 0);
+        kv.SetNum("hasIncendiary", g_PrimarySlot2[client].hasIncendiary ? 1 : 0);
+        kv.SetNum("hasExplosive", g_PrimarySlot2[client].hasExplosive ? 1 : 0);
+        kv.GoBack();
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Saved slot 2 to config: %s", g_PrimarySlot2[client].classname);
+    }
+    
+    // If both slots are empty, remove the player's section entirely
+    if (!g_PrimarySlot1[client].isValid && !g_PrimarySlot2[client].isValid)
+    {
+        kv.GoBack(); // Go back to root
+        kv.DeleteKey(steamId);
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Removed empty weapon state from config");
+    }
+    
+    kv.Rewind();
+    kv.ExportToFile(CONFIG_PATH);
+    delete kv;
+}
+
+
+void LoadWeaponStateFromConfig(int client)
+{
+    if (!FileExists(CONFIG_PATH))
+        return;
+        
+    char steamId[64];
+    if (!GetClientAuthId(client, AuthId_Steam2, steamId, sizeof(steamId)))
+        return;
+        
+    KeyValues kv = new KeyValues("DualPrimariesConfig");
+    if (!kv.ImportFromFile(CONFIG_PATH))
+    {
+        delete kv;
+        return;
+    }
+    
+    if (!kv.JumpToKey(steamId))
+    {
+        delete kv;
+        return;
+    }
+    
+    // Load slot 1
+    if (kv.JumpToKey("Slot1"))
+    {
+        char classname[64];
+        kv.GetString("classname", classname, sizeof(classname));
+        
+        if (strlen(classname) > 0)
+        {
+            strcopy(g_PrimarySlot1[client].classname, sizeof(g_PrimarySlot1[].classname), classname);
+            g_PrimarySlot1[client].clip = kv.GetNum("clip");
+            g_PrimarySlot1[client].ammo = kv.GetNum("ammo");
+            g_PrimarySlot1[client].upgrades = kv.GetNum("upgrades");
+            g_PrimarySlot1[client].hasLaser = kv.GetNum("hasLaser") ? true : false;
+            g_PrimarySlot1[client].hasIncendiary = kv.GetNum("hasIncendiary") ? true : false;
+            g_PrimarySlot1[client].hasExplosive = kv.GetNum("hasExplosive") ? true : false;
+            g_PrimarySlot1[client].isValid = true;
+            
+            if (g_cvDebugMode.BoolValue)
+                PrintToChat(client, "[DEBUG] Loaded slot 1: %s", classname);
+        }
+        kv.GoBack();
+    }
+    
+    // Load slot 2
+    if (kv.JumpToKey("Slot2"))
+    {
+        char classname[64];
+        kv.GetString("classname", classname, sizeof(classname));
+        
+        if (strlen(classname) > 0)
+        {
+            strcopy(g_PrimarySlot2[client].classname, sizeof(g_PrimarySlot2[].classname), classname);
+            g_PrimarySlot2[client].clip = kv.GetNum("clip");
+            g_PrimarySlot2[client].ammo = kv.GetNum("ammo");
+            g_PrimarySlot2[client].upgrades = kv.GetNum("upgrades");
+            g_PrimarySlot2[client].hasLaser = kv.GetNum("hasLaser") ? true : false;
+            g_PrimarySlot2[client].hasIncendiary = kv.GetNum("hasIncendiary") ? true : false;
+            g_PrimarySlot2[client].hasExplosive = kv.GetNum("hasExplosive") ? true : false;
+            g_PrimarySlot2[client].isValid = true;
+            
+            if (g_cvDebugMode.BoolValue)
+                PrintToChat(client, "[DEBUG] Loaded slot 2: %s", classname);
+        }
+        kv.GoBack();
+    }
+    
+    delete kv;
+}
+
+void DeleteConfigFile()
+{
+    if (FileExists(CONFIG_PATH))
+    {
+        DeleteFile(CONFIG_PATH);
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Deleted config file");
+    }
 }
 
 bool IsPrimaryWeapon(const char[] classname)
