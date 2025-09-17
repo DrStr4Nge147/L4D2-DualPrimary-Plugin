@@ -34,6 +34,7 @@ bool g_IsWeaponSwitching[MAX_PLAYERS];
 // ConVars for toggles
 ConVar g_cvDebugMode;
 ConVar g_cvChatHints;
+ConVar g_cvAllowDuplicates;
 
 // Campaign and round tracking
 bool g_IsCampaignRestart = false;
@@ -45,6 +46,7 @@ public void OnPluginStart()
     // Create ConVars for toggles
     g_cvDebugMode = CreateConVar("sm_dualprimary_debug", "0", "Enable debug output (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvChatHints = CreateConVar("sm_dualprimary_hints", "1", "Enable chat hints for weapon pickup (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allow_duplicates", "1", "Allow duplicate primary weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
     RegConsoleCmd("sm_switchprimary", Cmd_SwitchPrimary, "Switch between two primaries");
     RegConsoleCmd("sm_storeprimary", Cmd_StorePrimary, "Manually store current primary weapon");
@@ -383,6 +385,17 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     char currentClassname[64];
     GetEntityClassname(currentWeapon, currentClassname, sizeof(currentClassname));
     
+    // Check for duplicate weapon if restriction is enabled
+    if (!g_cvAllowDuplicates.BoolValue && IsDuplicateWeapon(client, currentClassname))
+    {
+        if (g_cvChatHints.BoolValue)
+            PrintToChat(client, "[DualPrimaries] Cannot store duplicate weapon: %s (duplicate weapons disabled)", currentClassname);
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Duplicate weapon pickup blocked: %s", currentClassname);
+        return Plugin_Stop;
+    }
+    
     // If we had a previous weapon stored in slot 1 and it's different from the new weapon
     if (g_PrimarySlot1[client].isValid && 
         !StrEqual(g_PrimarySlot1[client].classname, currentClassname, false))
@@ -426,12 +439,22 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
     {
         // Only store in slot 2 if we don't already have a weapon stored there
         // and this weapon is different from what's currently in slot 1
+        // Also check for duplicate restriction
         if (!g_PrimarySlot2[client].isValid && 
             g_PrimarySlot1[client].isValid && 
             !StrEqual(classname, g_PrimarySlot1[client].classname, false))
         {
+            // Check for duplicate weapon if restriction is enabled
+            if (!g_cvAllowDuplicates.BoolValue && IsDuplicateWeapon(client, classname))
+            {
+                if (g_cvChatHints.BoolValue)
+                    PrintToChat(client, "[DualPrimaries] Cannot store duplicate weapon: %s (duplicate weapons disabled)", classname);
+                return;
+            }
+            
             SaveWeaponState(weapon, g_PrimarySlot2[client]);
-            PrintToChat(client, "[DualPrimaries] Stored %s in slot 2.", classname);
+            if (g_cvChatHints.BoolValue)
+                PrintToChat(client, "[DualPrimaries] Stored %s in slot 2.", classname);
             
             // Save to config file in real-time
             SavePlayerWeaponStateToConfig(client);
@@ -581,19 +604,46 @@ public Action Cmd_SwitchPrimary(int client, int args)
     int restoredWeapon = RestoreWeaponState(client, g_PrimarySlot2[client]);
     if (restoredWeapon > 0)
     {
-        // Swap the weapon states using copy function
+        // Store the weapon that was in slot 2 (now equipped) into slot 1
         WeaponState slot2Backup;
         CopyWeaponState(g_PrimarySlot2[client], slot2Backup);
-        CopyWeaponState(tempState, g_PrimarySlot2[client]);
         CopyWeaponState(slot2Backup, g_PrimarySlot1[client]);
+        
+        // Check for duplicate before storing current weapon in slot 2 if restriction is enabled
+        if (!g_cvAllowDuplicates.BoolValue && tempState.isValid && 
+            StrEqual(tempState.classname, g_PrimarySlot1[client].classname, false))
+        {
+            // Don't store the current weapon in slot 2 if it would create a duplicate
+            // Just clear slot 2 instead
+            ClearWeaponState(g_PrimarySlot2[client]);
+            
+            if (g_cvChatHints.BoolValue)
+            {
+                PrintToChat(client, "[DualPrimaries] Switched to %s (Clip: %d, Upgrades: %s%s%s).", 
+                    g_PrimarySlot1[client].classname,
+                    g_PrimarySlot1[client].clip,
+                    g_PrimarySlot1[client].hasLaser ? "L" : "",
+                    g_PrimarySlot1[client].hasIncendiary ? "I" : "",
+                    g_PrimarySlot1[client].hasExplosive ? "E" : "");
+                PrintToChat(client, "[DualPrimaries] Previous weapon not stored (would create duplicate).");
+            }
+            
+            if (g_cvDebugMode.BoolValue)
+                PrintToChat(client, "[DEBUG] Weapon switch completed, previous weapon cleared to avoid duplicate");
+        }
+        else
+        {
+            // Normal operation - store the previous weapon in slot 2
+            CopyWeaponState(tempState, g_PrimarySlot2[client]);
 
-        if (g_cvChatHints.BoolValue)
-            PrintToChat(client, "[DualPrimaries] Switched to %s (Clip: %d, Upgrades: %s%s%s).", 
-                g_PrimarySlot1[client].classname,
-                g_PrimarySlot1[client].clip,
-                g_PrimarySlot1[client].hasLaser ? "L" : "",
-                g_PrimarySlot1[client].hasIncendiary ? "I" : "",
-                g_PrimarySlot1[client].hasExplosive ? "E" : "");
+            if (g_cvChatHints.BoolValue)
+                PrintToChat(client, "[DualPrimaries] Switched to %s (Clip: %d, Upgrades: %s%s%s).", 
+                    g_PrimarySlot1[client].classname,
+                    g_PrimarySlot1[client].clip,
+                    g_PrimarySlot1[client].hasLaser ? "L" : "",
+                    g_PrimarySlot1[client].hasIncendiary ? "I" : "",
+                    g_PrimarySlot1[client].hasExplosive ? "E" : "");
+        }
         
         // Save to config file in real-time
         SavePlayerWeaponStateToConfig(client);
@@ -632,6 +682,17 @@ public Action Cmd_StorePrimary(int client, int args)
     {
         if (g_cvChatHints.BoolValue)
             PrintToChat(client, "[DualPrimaries] Current weapon is not a primary weapon.");
+        return Plugin_Handled;
+    }
+
+    // Check for duplicate weapon if restriction is enabled
+    if (!g_cvAllowDuplicates.BoolValue && IsDuplicateWeapon(client, classname))
+    {
+        if (g_cvChatHints.BoolValue)
+            PrintToChat(client, "[DualPrimaries] Cannot store duplicate weapon: %s (duplicate weapons disabled)", classname);
+        
+        if (g_cvDebugMode.BoolValue)
+            PrintToChat(client, "[DEBUG] Duplicate weapon store blocked: %s", classname);
         return Plugin_Handled;
     }
 
@@ -1149,4 +1210,21 @@ bool IsPrimaryWeapon(const char[] classname)
          || StrEqual(classname, "sniper_military", false)
          || StrEqual(classname, "smg_silenced", false)
          || StrEqual(classname, "smg_mp5", false));
+}
+
+bool IsDuplicateWeapon(int client, const char[] weaponClassname)
+{
+    // If duplicates are allowed, return false (not a duplicate concern)
+    if (g_cvAllowDuplicates.BoolValue)
+        return false;
+    
+    // Check against slot 1
+    if (g_PrimarySlot1[client].isValid && StrEqual(g_PrimarySlot1[client].classname, weaponClassname, false))
+        return true;
+    
+    // Check against slot 2
+    if (g_PrimarySlot2[client].isValid && StrEqual(g_PrimarySlot2[client].classname, weaponClassname, false))
+        return true;
+    
+    return false;
 }
