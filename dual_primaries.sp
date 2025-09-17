@@ -48,14 +48,15 @@ public void OnPluginStart()
     g_cvChatHints = CreateConVar("sm_dualprimary_hints", "1", "Enable chat hints for weapon pickup (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allow_duplicates", "0", "Allow duplicate primary weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
-    RegConsoleCmd("sm_switchprimary", Cmd_SwitchPrimary, "Switch between two primaries");
-    RegConsoleCmd("sm_storeprimary", Cmd_StorePrimary, "Manually store current primary weapon");
-    RegConsoleCmd("sm_primarystatus", Cmd_PrimaryStatus, "Show stored primary weapons");
+    // Register admin commands with proper flags
+    RegAdminCmd("sm_switchprimary", Cmd_SwitchPrimary, ADMFLAG_ROOT, "Switch between two primaries");
+    RegAdminCmd("sm_storeprimary", Cmd_StorePrimary, ADMFLAG_ROOT, "Manually store current primary weapon");
+    RegAdminCmd("sm_primarystatus", Cmd_PrimaryStatus, ADMFLAG_ROOT, "Show stored primary weapons");
     
     // Add client command for binding (without sm_ prefix)
-    RegConsoleCmd("switchprimary", Cmd_SwitchPrimary, "Switch between two primaries (bindable)");
-    RegConsoleCmd("storeprimary", Cmd_StorePrimary, "Manually store current primary weapon (bindable)");
-    RegConsoleCmd("primarystatus", Cmd_PrimaryStatus, "Show stored primary weapons (bindable)");
+    RegAdminCmd("switchprimary", Cmd_SwitchPrimary, ADMFLAG_ROOT, "Switch between two primaries (bindable)");
+    RegAdminCmd("storeprimary", Cmd_StorePrimary, ADMFLAG_ROOT, "Manually store current primary weapon (bindable)");
+    RegAdminCmd("primarystatus", Cmd_PrimaryStatus, ADMFLAG_ROOT, "Show stored primary weapons (bindable)");
     
     // Add server commands for console use
     RegServerCmd("sm_switchprimary_server", Cmd_SwitchPrimary_Server, "Switch primary weapons from server console");
@@ -565,7 +566,54 @@ public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast
 // ----------------------
 public Action Cmd_SwitchPrimary(int client, int args)
 {
-    if (client <= 0 || client > MaxClients || !IsClientInGame(client) || !IsPlayerAlive(client)) return Plugin_Handled;
+    // If command is used from server console, try to get target
+    if (client == 0)
+    {
+        if (args < 1)
+        {
+            PrintToServer("[DualPrimaries] Usage: sm_switchprimary <#userid|name> (from server console) or !switchprimary (in-game)");
+            return Plugin_Handled;
+        }
+        
+        char targetName[MAX_TARGET_LENGTH];
+        char target_name[MAX_TARGET_LENGTH];
+        int target_list[MAXPLAYERS];
+        int target_count;
+        bool tn_is_ml;
+        
+        GetCmdArg(1, targetName, sizeof(targetName));
+        
+        if ((target_count = ProcessTargetString(
+            targetName,
+            client,
+            target_list,
+            MAXPLAYERS,
+            COMMAND_FILTER_ALIVE, // Only allow alive players
+            target_name,
+            sizeof(target_name),
+            tn_is_ml)) <= 0)
+        {
+            ReplyToTargetError(client, target_count);
+            return Plugin_Handled;
+        }
+        
+        // Use the first target
+        client = target_list[0];
+    }
+    
+    // Check if client is valid and in-game
+    if (!IsClientInGame(client))
+    {
+        ReplyToCommand(client, "[DualPrimaries] You must be in-game to use this command.");
+        return Plugin_Handled;
+    }
+    
+    // Check if player is alive
+    if (!IsPlayerAlive(client))
+    {
+        ReplyToCommand(client, "[DualPrimaries] You must be alive to switch weapons.");
+        return Plugin_Handled;
+    }
 
     // Debug output
     if (g_cvDebugMode.BoolValue)
@@ -665,7 +713,54 @@ public Action Cmd_SwitchPrimary(int client, int args)
 // ----------------------
 public Action Cmd_StorePrimary(int client, int args)
 {
-    if (client <= 0 || client > MaxClients || !IsClientInGame(client) || !IsPlayerAlive(client)) return Plugin_Handled;
+    // If command is used from server console, try to get target
+    if (client == 0)
+    {
+        if (args < 1)
+        {
+            PrintToServer("[DualPrimaries] Usage: sm_storeprimary <#userid|name> (from server console) or !storeprimary (in-game)");
+            return Plugin_Handled;
+        }
+        
+        char targetName[MAX_TARGET_LENGTH];
+        char target_name[MAX_TARGET_LENGTH];
+        int target_list[MAXPLAYERS];
+        int target_count;
+        bool tn_is_ml;
+        
+        GetCmdArg(1, targetName, sizeof(targetName));
+        
+        if ((target_count = ProcessTargetString(
+            targetName,
+            client,
+            target_list,
+            MAXPLAYERS,
+            COMMAND_FILTER_ALIVE, // Only allow alive players
+            target_name,
+            sizeof(target_name),
+            tn_is_ml)) <= 0)
+        {
+            ReplyToTargetError(client, target_count);
+            return Plugin_Handled;
+        }
+        
+        // Use the first target
+        client = target_list[0];
+    }
+    
+    // Check if client is valid and in-game
+    if (!IsClientInGame(client))
+    {
+        ReplyToCommand(client, "[DualPrimaries] You must be in-game to use this command.");
+        return Plugin_Handled;
+    }
+    
+    // Check if player is alive
+    if (!IsPlayerAlive(client))
+    {
+        ReplyToCommand(client, "[DualPrimaries] You must be alive to store weapons.");
+        return Plugin_Handled;
+    }
 
     int weapon = GetPlayerWeaponSlot(client, 0);
     if (weapon <= 0 || !IsValidEntity(weapon))
