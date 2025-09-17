@@ -46,7 +46,7 @@ public void OnPluginStart()
     // Create ConVars for toggles
     g_cvDebugMode = CreateConVar("sm_dualprimary_debug", "0", "Enable debug output (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvChatHints = CreateConVar("sm_dualprimary_hints", "1", "Enable chat hints for weapon pickup (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-    g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allow_duplicates", "1", "Allow duplicate primary weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allow_duplicates", "0", "Allow duplicate primary weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
     RegConsoleCmd("sm_switchprimary", Cmd_SwitchPrimary, "Switch between two primaries");
     RegConsoleCmd("sm_storeprimary", Cmd_StorePrimary, "Manually store current primary weapon");
