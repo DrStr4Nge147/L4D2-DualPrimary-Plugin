@@ -10,6 +10,14 @@
 #define MAX_PLAYERS 33
 #define CONFIG_PATH "data/dualprimaries_weapons.cfg"
 
+public Plugin myinfo = 
+{
+    name = "Dual Primaries",
+    author = "DrStr4Nge147",
+    description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
+    version = "1.3"
+};
+
 // Weapon state structure
 enum struct WeaponState
 {
