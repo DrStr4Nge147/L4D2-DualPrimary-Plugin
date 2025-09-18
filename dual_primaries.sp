@@ -1143,7 +1143,8 @@ public Action Timer_LoadWeaponState(Handle timer, DataPack pack)
 
 void SavePlayerWeaponStateToConfig(int client)
 {
-    if (client <= 0 || !IsClientInGame(client))
+    // Don't save weapon states for bots
+    if (client <= 0 || !IsClientInGame(client) || IsFakeClient(client))
         return;
         
     char steamId[64];
@@ -1216,7 +1217,8 @@ void SavePlayerWeaponStateToConfig(int client)
 
 void LoadWeaponStateFromConfig(int client)
 {
-    if (!FileExists(CONFIG_PATH))
+    // Don't load weapon states for bots
+    if (!FileExists(CONFIG_PATH) || IsFakeClient(client))
         return;
         
     char steamId[64];
