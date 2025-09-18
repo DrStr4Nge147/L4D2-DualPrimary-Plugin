@@ -173,6 +173,35 @@ void CopyWeaponState(WeaponState source, WeaponState dest)
     dest.isValid = source.isValid;
 }
 
+void SaveCurrentWeaponState(int client, WeaponState weapon)
+{
+    int currentWeapon = GetPlayerWeaponSlot(client, 0);
+    if (currentWeapon > 0 && IsValidEntity(currentWeapon))
+    {
+        SaveWeaponState(currentWeapon, weapon);
+        
+        // If the weapon has upgrade ammo, make sure to save that too
+        int upgradeBitVec = GetEntProp(currentWeapon, Prop_Send, "m_upgradeBitVec");
+        if (upgradeBitVec & (1 << 0) || upgradeBitVec & (1 << 1))
+        {
+            // The weapon has either incendiary or explosive ammo
+            weapon.ammo = GetEntProp(currentWeapon, Prop_Send, "m_nUpgradedPrimaryAmmoLoaded");
+            weapon.hasIncendiary = (upgradeBitVec & (1 << 0)) ? true : false;
+            weapon.hasExplosive = (upgradeBitVec & (1 << 1)) ? true : false;
+        }
+        else
+        {
+            // No upgrade ammo, clear the flags
+            weapon.hasIncendiary = false;
+            weapon.hasExplosive = false;
+        }
+    }
+    else
+    {
+        ClearWeaponState(weapon);
+    }
+}
+
 void SaveWeaponState(int weaponEntity, WeaponState weapon)
 {
     if (weaponEntity <= 0 || !IsValidEntity(weaponEntity))
@@ -196,16 +225,36 @@ void SaveWeaponState(int weaponEntity, WeaponState weapon)
     if (ammoType >= 0)
     {
         weapon.ammo = GetEntProp(owner, Prop_Send, "m_iAmmo", _, ammoType);
+        
+        // Save upgrade ammo count if applicable
+        int upgradeBitVec = GetEntProp(weaponEntity, Prop_Send, "m_upgradeBitVec");
+        if (upgradeBitVec & (1 << 0)) // Incendiary ammo
+        {
+            weapon.hasIncendiary = true;
+            weapon.hasExplosive = false;
+            weapon.ammo = GetEntProp(weaponEntity, Prop_Send, "m_nUpgradedPrimaryAmmoLoaded");
+        }
+        else if (upgradeBitVec & (1 << 1)) // Explosive ammo
+        {
+            weapon.hasExplosive = true;
+            weapon.hasIncendiary = false;
+            weapon.ammo = GetEntProp(weaponEntity, Prop_Send, "m_nUpgradedPrimaryAmmoLoaded");
+        }
+        else
+        {
+            weapon.hasIncendiary = false;
+            weapon.hasExplosive = false;
+        }
     }
     else
     {
         weapon.ammo = 0;
+        weapon.hasIncendiary = false;
+        weapon.hasExplosive = false;
     }
     
     weapon.upgrades = GetEntProp(weaponEntity, Prop_Send, "m_upgradeBitVec");
-    weapon.hasLaser = (weapon.upgrades & 2) ? true : false;
-    weapon.hasIncendiary = (weapon.upgrades & 4) ? true : false;
-    weapon.hasExplosive = (weapon.upgrades & 8) ? true : false;
+    weapon.hasLaser = (weapon.upgrades & (1 << 2)) ? true : false;
     weapon.isValid = true;
 }
 
@@ -218,11 +267,90 @@ int RestoreWeaponState(int client, WeaponState weapon)
     if (newWeapon > 0 && IsValidEntity(newWeapon))
     {
         SetEntProp(newWeapon, Prop_Send, "m_iClip1", weapon.clip);
-        SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", weapon.upgrades);
         
-        // Set ammo in reserve
+        // Get the ammo type for this weapon
         int ammoType = GetEntProp(newWeapon, Prop_Send, "m_iPrimaryAmmoType");
-        if (ammoType >= 0)
+        
+        // Apply upgrade ammo if needed
+        if (weapon.hasIncendiary || weapon.hasExplosive)
+        {
+            int upgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
+            
+            if (weapon.hasIncendiary)
+            {
+                upgradeBitVec |= (1 << 0); // Set incendiary bit
+                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
+            }
+            else if (weapon.hasExplosive)
+            {
+                upgradeBitVec |= (1 << 1); // Set explosive bit
+                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+            }
+            
+            // Apply the upgrade bit vector and ammo count
+            SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+            
+            // Only set the upgraded ammo if we have some left
+            if (weapon.ammo > 0)
+            {
+                // First, clear any existing upgrade ammo to prevent stacking
+                int upgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
+                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
+                
+                // Set the appropriate upgrade bit
+                if (weapon.hasIncendiary)
+                    upgradeBitVec |= (1 << 0);
+                else if (weapon.hasExplosive)
+                    upgradeBitVec |= (1 << 1);
+                    
+                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+                SetEntProp(newWeapon, Prop_Send, "m_nUpgradedPrimaryAmmoLoaded", weapon.ammo);
+                
+                // Make sure we have ammo in reserve for the upgrade type
+                if (ammoType >= 0)
+                {
+                    // Only give ammo if we're actually low
+                    int currentAmmo = GetEntProp(client, Prop_Send, "m_iAmmo", _, ammoType);
+                    if (currentAmmo <= 0)
+                    {
+                        // Give a small amount of ammo to prevent infinite ammo exploit
+                        SetEntProp(client, Prop_Send, "m_iAmmo", GetMaxAmmoForWeapon(weapon.classname) / 4, _, ammoType);
+                    }
+                }
+            }
+            else
+            {
+                // No more upgrade ammo, revert to regular ammo
+                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
+                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+                
+                // Restore the clip to the last known value
+                SetEntProp(newWeapon, Prop_Send, "m_iClip1", weapon.clip);
+                
+                // Make sure we have some regular ammo in reserve
+                if (ammoType >= 0)
+                {
+                    int currentAmmo = GetEntProp(client, Prop_Send, "m_iAmmo", _, ammoType);
+                    if (currentAmmo <= 0)
+                    {
+                        SetEntProp(client, Prop_Send, "m_iAmmo", GetMaxAmmoForWeapon(weapon.classname) / 2, _, ammoType);
+                    }
+                }
+                
+                // We're done here, return the weapon
+                return newWeapon;
+            }
+        }
+        else
+        {
+            // No upgrade ammo, just set the normal upgrades (like laser sight)
+            SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", weapon.upgrades & ~(1 << 0) & ~(1 << 1));
+        }
+        
+        // Set ammo in reserve if we're not using upgrade ammo
+        if (ammoType >= 0 && !weapon.hasIncendiary && !weapon.hasExplosive)
         {
             SetEntProp(client, Prop_Send, "m_iAmmo", weapon.ammo, _, ammoType);
         }
@@ -351,25 +479,39 @@ public Action Timer_CheckAmmoChanges(Handle timer)
         
         int currentAmmo = GetEntProp(client, Prop_Send, "m_iAmmo", _, ammoType);
         
-        // Debug current ammo tracking
-        if (g_cvDebugMode.BoolValue && g_LastAmmo[client] != currentAmmo)
-            PrintToChat(client, "[DEBUG] Ammo change: %d -> %d for %s (switching: %s)", g_LastAmmo[client], currentAmmo, currentWeapon, g_IsWeaponSwitching[client] ? "yes" : "no");
+        // Check for upgrade ammo
+        int upgradeBitVec = GetEntProp(weapon, Prop_Send, "m_upgradeBitVec");
+        bool hasUpgradeAmmo = (upgradeBitVec & (1 << 0)) || (upgradeBitVec & (1 << 1));
         
-        // Check if ammo increased (indicating pickup) but not during weapon switching
-        if (g_LastAmmo[client] != -1 && currentAmmo > g_LastAmmo[client] && !g_IsWeaponSwitching[client])
+        // Only track ammo changes for non-upgraded weapons
+        if (!hasUpgradeAmmo)
         {
-            if (g_cvDebugMode.BoolValue)
-                PrintToChat(client, "[DEBUG] Ammo increase detected: %d -> %d (not switching)", g_LastAmmo[client], currentAmmo);
+            // Debug current ammo tracking
+            if (g_cvDebugMode.BoolValue && g_LastAmmo[client] != currentAmmo)
+                PrintToChat(client, "[DEBUG] Ammo change: %d -> %d for %s (upgraded: %s, switching: %s)", 
+                    g_LastAmmo[client], currentAmmo, currentWeapon, 
+                    hasUpgradeAmmo ? "yes" : "no",
+                    g_IsWeaponSwitching[client] ? "yes" : "no");
             
-            // Replenish ammo for both stored primary weapons
-            ReplenishBothPrimaryWeapons(client);
+            // Check if ammo increased (indicating pickup) but not during weapon switching
+            if (g_LastAmmo[client] != -1 && currentAmmo > g_LastAmmo[client] && !g_IsWeaponSwitching[client])
+            {
+                if (g_cvDebugMode.BoolValue)
+                    PrintToChat(client, "[DEBUG] Ammo increase detected: %d -> %d (not switching)", g_LastAmmo[client], currentAmmo);
+                
+                // Only replenish if we're not using upgraded ammo
+                if (!hasUpgradeAmmo)
+                {
+                    ReplenishBothPrimaryWeapons(client);
+                }
+            }
+            else if (g_IsWeaponSwitching[client] && g_cvDebugMode.BoolValue)
+            {
+                PrintToChat(client, "[DEBUG] Ammo change ignored during weapon switching");
+            }
+            
+            g_LastAmmo[client] = currentAmmo;
         }
-        else if (g_IsWeaponSwitching[client] && g_cvDebugMode.BoolValue)
-        {
-            PrintToChat(client, "[DEBUG] Ammo change ignored during weapon switching");
-        }
-        
-        g_LastAmmo[client] = currentAmmo;
     }
     
     return Plugin_Continue;
@@ -661,6 +803,10 @@ public Action Cmd_SwitchPrimary(int client, int args)
     if (restoredWeapon > 0)
     {
         // Store the weapon that was in slot 2 (now equipped) into slot 1
+        // First save the current weapon's state
+        SaveCurrentWeaponState(client, g_PrimarySlot2[client]);
+        
+        // Then copy the state to slot 1
         WeaponState slot2Backup;
         CopyWeaponState(g_PrimarySlot2[client], slot2Backup);
         CopyWeaponState(slot2Backup, g_PrimarySlot1[client]);
