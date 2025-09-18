@@ -15,7 +15,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.3"
+    version = "1.4"
 };
 
 // Weapon state structure
@@ -1479,3 +1479,4 @@ bool IsDuplicateWeapon(int client, const char[] weaponClassname)
     
     return false;
 }
+
