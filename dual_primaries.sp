@@ -15,7 +15,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5"
+    version = "1.5.1"
 };
 
 // Weapon state structure
@@ -691,8 +691,20 @@ public void Event_MissionLost(Event event, const char[] name, bool dontBroadcast
 {
     // This is typically a wipe/restart scenario
     g_IsCampaignRestart = true;
+    
+    // Clear weapon states for all players when mission is lost
+    for (int client = 1; client <= MaxClients; client++)
+    {
+        if (IsClientInGame(client) && !IsFakeClient(client))
+        {
+            ClearWeaponState(g_PrimarySlot1[client]);
+            ClearWeaponState(g_PrimarySlot2[client]);
+            SavePlayerWeaponStateToConfig(client);
+        }
+    }
+    
     if (g_cvDebugMode.BoolValue)
-        PrintToServer("[DualPrimaries] Mission lost - marking as campaign restart");
+        PrintToServer("[DualPrimaries] Mission lost - cleared all player weapon states and marked as campaign restart");
 }
 
 public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
@@ -1479,5 +1491,3 @@ bool IsDuplicateWeapon(int client, const char[] weaponClassname)
     
     return false;
 }
-
-
