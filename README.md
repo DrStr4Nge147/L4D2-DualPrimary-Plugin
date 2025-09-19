@@ -2,6 +2,12 @@
 
 A SourceMod plugin that allows players to store and switch between two primary weapons with complete state preservation including ammo, attachments, and upgrades.
 
+## Requirements
+
+- **SourceMod**: 1.10 or higher
+- **Game**: Left 4 Dead 2
+- **Server**: Dedicated or Listen server
+
 ## Features
 
 - **Dual Weapon Storage**: Store two primary weapons and switch between them instantly
@@ -229,12 +235,6 @@ The plugin works with all L4D2 primary weapons:
 - Complete state preservation
 - Configurable output modes
 - Key binding support
-
-## Requirements
-
-- **SourceMod**: 1.10 or higher
-- **Game**: Left 4 Dead 2
-- **Server**: Dedicated or Listen server
 
 ## Support
 
