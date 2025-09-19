@@ -1,4 +1,4 @@
-# Dual Primaries Plugin for Left 4 Dead 2
+# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.2)
 
 A SourceMod plugin that allows players to store and switch between two primary weapons with complete state preservation including ammo, attachments, and upgrades.
 
@@ -17,6 +17,7 @@ A SourceMod plugin that allows players to store and switch between two primary w
 - **Configurable Output**: Toggle debug mode and chat hints on/off
 - **Key Binding Support**: Bind weapon switching to any key
 - **Multiple Command Types**: Chat, console, and server commands available
+- **Minimalist UI**: Clean, unobtrusive notifications
 
 ## Video Demonstration
 
@@ -30,100 +31,65 @@ A SourceMod plugin that allows players to store and switch between two primary w
 
 ## Commands
 
-### Chat Commands
-- `!switchprimary` - Switch between stored weapons
-- `!storeprimary` - Manually store current weapon in slot 2
+### Player Commands
+- `!switchprimary` or `switchprimary` - Switch between stored weapons
+- `!storeprimary` or `storeprimary` - Store current primary weapon
+- `!dualinfo` or `dualinfo` - Show current plugin status and settings
+- `!dualhelp` or `dualhelp` - Show available commands and binding help
+
+### Admin Commands (Requires ADMFLAG_ROOT)
 - `!primarystatus` - Show status of both weapon slots
-
-### Console Commands (Client)
-- `sm_switchprimary` - Switch between stored weapons
-- `sm_storeprimary` - Manually store current weapon
-- `sm_primarystatus` - Show weapon status
-
-### Server Console Commands
+- `sm_primarystatus` - Show weapon status in console
+- `sm_primarystatus_server <client_id>` - Show status for specific client
 - `sm_switchprimary_server <client_id>` - Switch weapons for specific client
 - `sm_storeprimary_server <client_id>` - Store weapon for specific client
-- `sm_primarystatus_server <client_id>` - Show status for specific client
 
-### Bindable Commands
-- `switchprimary` - Switch weapons (bindable)
-- `storeprimary` - Store weapon (bindable)
-- `primarystatus` - Show status (bindable)
+### Key Binding
+```
+bind "KEY" "sm_switchprimary"   // Bind a key to switch weapons
+bind "KEY" "sm_storeprimary"    // Bind a key to store current weapon
+```
 
 ## Key Binding
 
 ### Recommended Binds
 
-#### For Singleplayer:
+#### For All Game Modes:
 ```
-bind "q" "switchprimary YourPlayerName"
-```
-
-#### For Multiplayer/Local Server:
-```
-bind "q" "switchprimary"
+bind "q" "sm_switchprimary"      // Switch between weapons
+bind "v" "sm_storeprimary"       // Store current weapon
+bind "b" "sm_dualhelp"           // Show help
 ```
 
-Or to manually specify your name (works in both modes):
-```
-bind "q" "switchprimary YourPlayerName"
-```
+### Console Commands:
+- `sm_switchprimary` - Switch between stored weapons
+- `sm_storeprimary` - Store current weapon
+- `sm_dualinfo` - Show plugin status
+- `sm_dualhelp` - Show command help
 
-### Additional Binding Examples:
-```
-bind "<key>" "sm_switchprimary_server 1"
-bind "<key>" "sm_storeprimary_server 1"
-bind "<key>" "sm_primarystatus_server 1"
-```
-
-### Alternative Binds
-```
-bind "<key>" "switchprimary"
-bind "<key>" "storeprimary"
-```
-
-**Note**: Server commands (`sm_*_server`) tend to work more reliably for key binds.
+**Tip**: Use `sm_` prefix for reliable command execution in all contexts.
 
 ## Configuration
 
-The plugin creates a config file at `cfg/sourcemod/dualprimary.cfg` with these settings:
+Edit the auto-generated config file at `cfg/sourcemod/plugin.dual_primaries.cfg` to customize these settings:
 
 ### ConVars
 
 | ConVar | Default | Description |
 |--------|---------|-------------|
-| `sm_dualprimary_debug` | `0` | Enable debug output (0=disabled, 1=enabled) |
-| `sm_dualprimary_hints` | `1` | Enable chat hints (0=disabled, 1=enabled) |
-| `sm_dualprimary_allow_duplicates` | `0` | Allow duplicate primary weapons (0=disabled, 1=enabled) |
+| `sm_dualprimary_debug` | `0` | Debug output level (0=disabled, 1-2=debug levels) |
+| `sm_dualprimary_chathints` | `0` | Show chat notifications (0=disabled, 1=enabled) |
+| `sm_dualprimary_allowduplicates` | `0` | Allow duplicate primary weapons (0=disabled, 1=enabled) |
+| `sm_dualprimary_showwelcome` | `1` | Show welcome message on load (0=disabled, 1=enabled) |
+| `sm_dualprimary_cooldown` | `1.0` | Cooldown between weapon switches (in seconds) |
 
 ### Configuration Examples
 
 **Clean Gameplay (Recommended)**:
 ```
 sm_dualprimary_debug 0     // No debug spam
-sm_dualprimary_hints 1     // Show weapon pickup messages
-sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
-```
-
-**Classic Mode (Original Behavior)**:
-```
-sm_dualprimary_debug 0
-sm_dualprimary_hints 1
-sm_dualprimary_allow_duplicates 1  // Allow duplicate weapons
-```
-
-**Silent Mode**:
-```
-sm_dualprimary_debug 0     // No debug output
-sm_dualprimary_hints 0     // No chat messages at all
-sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
-```
-
-**Debug Mode**:
-```
-sm_dualprimary_debug 1     // Show technical debug info
-sm_dualprimary_hints 1     // Show normal messages too
-sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
+sm_dualprimary_chathints 1     // Show weapon pickup messages
+sm_dualprimary_allowduplicates 0  // Prevent duplicate weapons
 ```
 
 ## How It Works
@@ -134,7 +100,7 @@ sm_dualprimary_allow_duplicates 0  // Prevent duplicate weapons
 3. **Third Weapon**: Only replaces Slot 1 (Slot 2 stays protected)
 
 ### Duplicate Weapon Restriction
-When `sm_dualprimary_allow_duplicates` is set to `0` (recommended):
+When `sm_dualprimary_allowduplicates` is set to `0` (recommended):
 - Players cannot have the same weapon in both slots
 - Attempting to pick up a duplicate weapon is blocked
 - Switching to a weapon that would create a duplicate clears the second slot
@@ -210,7 +176,7 @@ The plugin works with all L4D2 primary weapons:
 - Check if you're picking up primary weapons (not pistols/melee)
 
 ### Duplicate Weapons Not Blocked
-- Verify `sm_dualprimary_allow_duplicates` is set to `0`
+- Verify `sm_dualprimary_allowduplicates` is set to `0`
 - Check for any conflicting plugins that might modify weapon behavior
 - Ensure you're using the latest version of the plugin
 - Enable debug mode: `sm_dualprimary_debug 1`
