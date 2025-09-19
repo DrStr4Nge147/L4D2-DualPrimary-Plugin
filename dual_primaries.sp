@@ -15,7 +15,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.1"
+    version = "1.5.2"
 };
 
 // Weapon state structure
@@ -38,30 +38,110 @@ WeaponState g_PrimarySlot2[MAX_PLAYERS];
 char g_LastWeapon[MAX_PLAYERS][64];
 int g_LastAmmo[MAX_PLAYERS];
 bool g_IsWeaponSwitching[MAX_PLAYERS];
+float g_LastSwitchTime[MAX_PLAYERS];
 
 // ConVars for toggles
 ConVar g_cvDebugMode;
 ConVar g_cvChatHints;
 ConVar g_cvAllowDuplicates;
+ConVar g_cvSwitchCooldown;
+ConVar g_cvShowWelcome;
 
 // Campaign and round tracking
 bool g_IsCampaignRestart = false;
 int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
+// Plugin version for tracking reloads
+#define PLUGIN_VERSION "1.5.2"
+char g_LastPluginVersion[32];
+
+void DisplayWelcomeMessage()
+{
+    char duplicateStatus[64];
+    if (g_cvAllowDuplicates.BoolValue)
+        duplicateStatus = "\x04ENABLED\x01 - You can carry duplicate weapons";
+    else
+        duplicateStatus = "\x02DISABLED\x01 - No duplicate weapons allowed";
+        
+    char chatHintsStatus[64];
+    if (g_cvChatHints.BoolValue)
+        chatHintsStatus = "\x04ENABLED\x01 - You will see chat notifications";
+    else
+        chatHintsStatus = "\x02DISABLED\x01 - No chat notifications";
+    
+    PrintToChatAll("\x04[DUAL PRIMARIES] \x01v%s | Duplicates: %s | Hints: %s", 
+        PLUGIN_VERSION,
+        duplicateStatus,
+        chatHintsStatus);
+}
+
+public Action Cmd_DualHelp(int client, int args)
+{
+    if (client == 0)
+    {
+        PrintToServer("Dual Primaries Commands:");
+        PrintToServer("!storeprimary - Store your current primary weapon");
+        PrintToServer("!switchprimary - Switch between stored weapons");
+        PrintToServer("bind <key> \"sm_switchprimary\" - Bind a key to switch weapons");
+        return Plugin_Handled;
+    }
+    
+    PrintToChat(client, "\x04[DUAL PRIMARIES] \x01Commands:");
+    PrintToChat(client, "\x04!storeprimary \x01- Store current primary");
+    PrintToChat(client, "\x04!switchprimary \x01- Switch between weapons");
+    PrintToChat(client, "\x04bind <key> \"sm_switchprimary\" \x01- Bind a key to switch");
+    
+    return Plugin_Handled;
+}
+
+public Action Cmd_DualInfo(int client, int args)
+{
+    if (client == 0) // Command was executed from server console
+    {
+        // Display message to all players
+        CreateTimer(0.1, Timer_DisplayWelcomeMessage, _, TIMER_FLAG_NO_MAPCHANGE);
+        PrintToServer("Dual Primaries info has been displayed to all players.");
+    }
+    else // Command was executed by a player
+    {
+        DisplayWelcomeMessage();
+    }
+    return Plugin_Handled;
+}
+
 public void OnPluginStart()
 {
     // Create ConVars for toggles
-    g_cvDebugMode = CreateConVar("sm_dualprimary_debug", "0", "Enable debug output (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-    g_cvChatHints = CreateConVar("sm_dualprimary_hints", "1", "Enable chat hints for weapon pickup (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-    g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allow_duplicates", "0", "Allow duplicate primary weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvDebugMode = CreateConVar("sm_dualprimary_debug", "0", "Enable debug output (0=disabled, 1=verbose, 2=debug)", FCVAR_NOTIFY, true, 0.0, true, 2.0);
+    g_cvChatHints = CreateConVar("sm_dualprimary_chathints", "0", "Enable chat notifications (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allowduplicates", "0", "Allow carrying duplicate weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvSwitchCooldown = CreateConVar("sm_dualprimary_cooldown", "1", "Cooldown between weapon switches (in seconds)", FCVAR_NOTIFY, true, 0.1, true, 5.0);
+    g_cvShowWelcome = CreateConVar("sm_dualprimary_showwelcome", "1", "Show welcome message on plugin load (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    
+    // Show welcome message if this is the first load or a reload
+    if (!StrEqual(g_LastPluginVersion, PLUGIN_VERSION))
+    {
+        strcopy(g_LastPluginVersion, sizeof(g_LastPluginVersion), PLUGIN_VERSION);
+        if (g_cvShowWelcome.BoolValue)
+        {
+            CreateTimer(5.0, Timer_DisplayWelcomeMessage, _, TIMER_FLAG_NO_MAPCHANGE);
+        }
+    }
     
     // Register admin commands with proper flags
     RegAdminCmd("sm_switchprimary", Cmd_SwitchPrimary, ADMFLAG_ROOT, "Switch between two primaries");
     RegAdminCmd("sm_storeprimary", Cmd_StorePrimary, ADMFLAG_ROOT, "Manually store current primary weapon");
     RegAdminCmd("sm_primarystatus", Cmd_PrimaryStatus, ADMFLAG_ROOT, "Show stored primary weapons");
     
-    // Add client command for binding (without sm_ prefix)
+        // Add client commands
+    RegConsoleCmd("sm_dualinfo", Cmd_DualInfo, "Show dual primary weapons information");
+    RegConsoleCmd("dualinfo", Cmd_DualInfo, "Show dual primary weapons information (bindable)");
+    
+    // Add help command
+    RegConsoleCmd("sm_dualhelp", Cmd_DualHelp, "Show dual primary weapons help");
+    RegConsoleCmd("dualhelp", Cmd_DualHelp, "Show dual primary weapons help (bindable)");
+    
     RegAdminCmd("switchprimary", Cmd_SwitchPrimary, ADMFLAG_ROOT, "Switch between two primaries (bindable)");
     RegAdminCmd("storeprimary", Cmd_StorePrimary, ADMFLAG_ROOT, "Manually store current primary weapon (bindable)");
     RegAdminCmd("primarystatus", Cmd_PrimaryStatus, ADMFLAG_ROOT, "Show stored primary weapons (bindable)");
@@ -147,6 +227,12 @@ public void OnMapStart()
     }
     
     // g_IsMapTransition is no longer used - we rely on config file existence instead
+}
+
+public Action Timer_DisplayWelcomeMessage(Handle timer)
+{
+    DisplayWelcomeMessage();
+    return Plugin_Stop;
 }
 
 void ClearWeaponState(WeaponState weapon)
@@ -539,11 +625,9 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     // Check for duplicate weapon if restriction is enabled
     if (!g_cvAllowDuplicates.BoolValue && IsDuplicateWeapon(client, currentClassname))
     {
-        if (g_cvChatHints.BoolValue)
-            PrintToChat(client, "[DualPrimaries] Cannot store duplicate weapon: %s (duplicate weapons disabled)", currentClassname);
-        
-        if (g_cvDebugMode.BoolValue)
-            PrintToChat(client, "[DEBUG] Duplicate weapon pickup blocked: %s", currentClassname);
+        // Only show duplicate message if not switching weapons
+        if (g_cvChatHints.BoolValue && !g_IsWeaponSwitching[client])
+            PrintToChat(client, "[DualPrimaries] Cannot store duplicate weapon");
         return Plugin_Stop;
     }
     
@@ -556,20 +640,39 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
         {
             // Copy the old weapon from slot 1 to slot 2
             CopyWeaponState(g_PrimarySlot1[client], g_PrimarySlot2[client]);
-            if (g_cvChatHints.BoolValue)
-                PrintToChat(client, "[DualPrimaries] Auto-stored %s in slot 2.", g_PrimarySlot2[client].classname);
+            // Don't show stored message during weapon switching
+            if (g_cvChatHints.BoolValue && !g_IsWeaponSwitching[client])
+                PrintToChat(client, "[DualPrimaries] Stored %s", g_PrimarySlot2[client].classname);
         }
     }
     
     // Save the new weapon in slot 1
     SaveWeaponState(currentWeapon, g_PrimarySlot1[client]);
-    if (g_cvChatHints.BoolValue)
-        PrintToChat(client, "[DualPrimaries] Equipped %s in slot 1.", currentClassname);
+    
+    // Only show equipped message if not switching weapons
+    if (g_cvChatHints.BoolValue && !g_IsWeaponSwitching[client])
+        PrintToChat(client, "[DualPrimaries] Equipped %s", currentClassname);
     
     // Save to config file in real-time
     SavePlayerWeaponStateToConfig(client);
     
     return Plugin_Stop;
+}
+
+// Handle legacy ConVar changes
+public void OnLegacyConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+    char name[64];
+    convar.GetName(name, sizeof(name));
+    
+    if (StrEqual(name, "sm_dualprimary_allow_duplicates"))
+    {
+        g_cvAllowDuplicates.BoolValue = convar.BoolValue;
+    }
+    else if (StrEqual(name, "sm_dualprimary_hints"))
+    {
+        g_cvChatHints.BoolValue = convar.BoolValue;
+    }
 }
 
 // ----------------------
@@ -605,7 +708,7 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
             
             SaveWeaponState(weapon, g_PrimarySlot2[client]);
             if (g_cvChatHints.BoolValue)
-                PrintToChat(client, "[DualPrimaries] Stored %s in slot 2.", classname);
+                PrintToChat(client, "[DualPrimaries] Stored %s", classname);
             
             // Save to config file in real-time
             SavePlayerWeaponStateToConfig(client);
@@ -614,10 +717,36 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
 }
 
 // ----------------------
+// COOLDOWN MANAGEMENT
+// ----------------------
+void ResetCooldown(int client = 0)
+{
+    if (client > 0 && client <= MaxClients)
+    {
+        g_LastSwitchTime[client] = 0.0;
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Reset cooldown for client %N", client);
+    }
+    else
+    {
+        // Reset for all clients
+        for (int i = 1; i <= MaxClients; i++)
+        {
+            g_LastSwitchTime[i] = 0.0;
+        }
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Reset cooldowns for all clients");
+    }
+}
+
+// ----------------------
 // CAMPAIGN/ROUND EVENTS
 // ----------------------
 public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 {
+    // Reset cooldowns for all players at the start of a new round
+    ResetCooldown();
+    
     int currentTime = GetTime();
     
     // Check if this is a quick restart (within 8 seconds of last restart for more reliability)
@@ -673,10 +802,13 @@ public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 
 public void Event_MapTransition(Event event, const char[] name, bool dontBroadcast)
 {
+    // Reset cooldowns for all players during map transition
+    ResetCooldown();
+    
     // We no longer need to set g_IsMapTransition since we use file existence instead
     g_IsCampaignRestart = false; // Reset campaign restart flag for map transitions
     if (g_cvDebugMode.BoolValue)
-        PrintToServer("[DualPrimaries] Map transition detected");
+        PrintToServer("[DualPrimaries] Map transition detected - reset cooldowns");
 }
 
 public void Event_FinaleWin(Event event, const char[] name, bool dontBroadcast)
@@ -779,20 +911,70 @@ public Action Cmd_SwitchPrimary(int client, int args)
 
     // Debug output
     if (g_cvDebugMode.BoolValue)
+    {
         PrintToChat(client, "[DEBUG] Slot2 Valid: %s, Classname: '%s'", 
             g_PrimarySlot2[client].isValid ? "Yes" : "No", 
             g_PrimarySlot2[client].classname);
+        
+        // Show cooldown info in debug mode
+        float cooldown = g_cvSwitchCooldown.FloatValue;
+        float currentTime = GetGameTime();
+        float timeSinceLastSwitch = currentTime - g_LastSwitchTime[client];
+        PrintToChat(client, "[DEBUG] Cooldown: %.1f/%.1f", timeSinceLastSwitch, cooldown);
+    }
 
     if (!g_PrimarySlot2[client].isValid || g_PrimarySlot2[client].classname[0] == '\0')
     {
         if (g_cvChatHints.BoolValue)
         {
             PrintToChat(client, "[DualPrimaries] No other weapon stored to switch to.");
-            PrintToChat(client, "[DualPrimaries] Try using !storeprimary first to manually store a weapon.");
         }
         return Plugin_Handled;
     }
 
+    // Check cooldown
+    float cooldown = g_cvSwitchCooldown.FloatValue;
+    float currentTime = GetGameTime();
+    float timeSinceLastSwitch = currentTime - g_LastSwitchTime[client];
+    
+    if (cooldown > 0.0 && timeSinceLastSwitch < cooldown)
+    {
+        if (g_cvChatHints.BoolValue)
+        {
+            float remaining = cooldown - timeSinceLastSwitch;
+            // Visual feedback
+            PrintToChat(client, " \x01[\x04DualPrimaries\x01] \x03Please wait \x04%.1f \x03seconds before switching weapons again.", remaining);
+            // Play error sound
+            EmitSoundToClient(client, "buttons/button10.wav");
+            
+            // Visual cooldown bar in chat
+            int progressBars = 10;
+            int filledBars = RoundToFloor((timeSinceLastSwitch / cooldown) * progressBars);
+            char progressBar[32];
+            Format(progressBar, sizeof(progressBar), "\x03[\x04");
+            
+            for (int i = 0; i < progressBars; i++)
+            {
+                if (i < filledBars)
+                    StrCat(progressBar, sizeof(progressBar), "|");
+                else
+                    StrCat(progressBar, sizeof(progressBar), " ");
+            }
+            
+            StrCat(progressBar, sizeof(progressBar), "\x03]");
+            PrintToChat(client, "%s \x03Cooldown: \x04%.1f/%.1f", progressBar, timeSinceLastSwitch, cooldown);
+        }
+        
+        // Block the command completely during cooldown
+        return Plugin_Stop;
+    }
+    
+    // Update last switch time
+    g_LastSwitchTime[client] = currentTime;
+    
+    // Play switch sound
+    EmitSoundToClient(client, "items/ammo_pickup.wav");
+    
     // Mark that we're switching weapons to prevent ammo replenishment
     g_IsWeaponSwitching[client] = true;
     
@@ -833,13 +1015,7 @@ public Action Cmd_SwitchPrimary(int client, int args)
             
             if (g_cvChatHints.BoolValue)
             {
-                PrintToChat(client, "[DualPrimaries] Switched to %s (Clip: %d, Upgrades: %s%s%s).", 
-                    g_PrimarySlot1[client].classname,
-                    g_PrimarySlot1[client].clip,
-                    g_PrimarySlot1[client].hasLaser ? "L" : "",
-                    g_PrimarySlot1[client].hasIncendiary ? "I" : "",
-                    g_PrimarySlot1[client].hasExplosive ? "E" : "");
-                PrintToChat(client, "[DualPrimaries] Previous weapon not stored (would create duplicate).");
+                PrintToChat(client, "[DualPrimaries] Switched to %s", g_PrimarySlot1[client].classname);
             }
             
             if (g_cvDebugMode.BoolValue)
@@ -851,16 +1027,13 @@ public Action Cmd_SwitchPrimary(int client, int args)
             CopyWeaponState(tempState, g_PrimarySlot2[client]);
 
             if (g_cvChatHints.BoolValue)
-                PrintToChat(client, "[DualPrimaries] Switched to %s (Clip: %d, Upgrades: %s%s%s).", 
-                    g_PrimarySlot1[client].classname,
-                    g_PrimarySlot1[client].clip,
-                    g_PrimarySlot1[client].hasLaser ? "L" : "",
-                    g_PrimarySlot1[client].hasIncendiary ? "I" : "",
-                    g_PrimarySlot1[client].hasExplosive ? "E" : "");
+            {
+                PrintToChat(client, "[DualPrimaries] Switched to %s", g_PrimarySlot1[client].classname);
+            }
+            
+            // Save to config file in real-time
+            SavePlayerWeaponStateToConfig(client);
         }
-        
-        // Save to config file in real-time
-        SavePlayerWeaponStateToConfig(client);
     }
     else
     {
@@ -1477,17 +1650,16 @@ bool IsPrimaryWeapon(const char[] classname)
 
 bool IsDuplicateWeapon(int client, const char[] weaponClassname)
 {
-    // If duplicates are allowed, return false (not a duplicate concern)
-    if (g_cvAllowDuplicates.BoolValue)
+    // Don't check for duplicates if we're in the middle of switching weapons
+    if (g_IsWeaponSwitching[client])
         return false;
-    
-    // Check against slot 1
+        
+    // Check if this weapon already exists in either slot
     if (g_PrimarySlot1[client].isValid && StrEqual(g_PrimarySlot1[client].classname, weaponClassname, false))
         return true;
-    
-    // Check against slot 2
+        
     if (g_PrimarySlot2[client].isValid && StrEqual(g_PrimarySlot2[client].classname, weaponClassname, false))
         return true;
-    
+        
     return false;
 }
