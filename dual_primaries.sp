@@ -15,7 +15,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.2"
+    version = "1.5.3"
 };
 
 // Weapon state structure
@@ -39,6 +39,7 @@ char g_LastWeapon[MAX_PLAYERS][64];
 int g_LastAmmo[MAX_PLAYERS];
 bool g_IsWeaponSwitching[MAX_PLAYERS];
 float g_LastSwitchTime[MAX_PLAYERS];
+bool g_HadUpgradeAmmo[MAX_PLAYERS]; // Track if weapon had upgrade ammo in the previous check
 
 // ConVars for toggles
 ConVar g_cvDebugMode;
@@ -53,7 +54,7 @@ int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
 // Plugin version for tracking reloads
-#define PLUGIN_VERSION "1.5.2"
+#define PLUGIN_VERSION "1.5.3"
 char g_LastPluginVersion[32];
 
 void DisplayWelcomeMessage()
@@ -569,35 +570,56 @@ public Action Timer_CheckAmmoChanges(Handle timer)
         int upgradeBitVec = GetEntProp(weapon, Prop_Send, "m_upgradeBitVec");
         bool hasUpgradeAmmo = (upgradeBitVec & (1 << 0)) || (upgradeBitVec & (1 << 1));
         
-        // Only track ammo changes for non-upgraded weapons
-        if (!hasUpgradeAmmo)
+        // STRICT AMMO REPLENISHMENT RULES:
+        // 1. Only trigger on actual ammo pickups (ammo increase without weapon change)
+        // 2. Never trigger during weapon switches
+        // 3. Never trigger when picking up new weapons
+        
+        // Debug info
+        if (g_cvDebugMode.BoolValue && (g_LastAmmo[client] != currentAmmo || !StrEqual(g_LastWeapon[client], currentWeapon, false)))
         {
-            // Debug current ammo tracking
-            if (g_cvDebugMode.BoolValue && g_LastAmmo[client] != currentAmmo)
-                PrintToChat(client, "[DEBUG] Ammo change: %d -> %d for %s (upgraded: %s, switching: %s)", 
-                    g_LastAmmo[client], currentAmmo, currentWeapon, 
-                    hasUpgradeAmmo ? "yes" : "no",
-                    g_IsWeaponSwitching[client] ? "yes" : "no");
+            bool isNewWeaponPickup = (g_LastAmmo[client] == -1 || currentAmmo > g_LastAmmo[client] + 20);
             
-            // Check if ammo increased (indicating pickup) but not during weapon switching
-            if (g_LastAmmo[client] != -1 && currentAmmo > g_LastAmmo[client] && !g_IsWeaponSwitching[client])
-            {
-                if (g_cvDebugMode.BoolValue)
-                    PrintToChat(client, "[DEBUG] Ammo increase detected: %d -> %d (not switching)", g_LastAmmo[client], currentAmmo);
-                
-                // Only replenish if we're not using upgraded ammo
-                if (!hasUpgradeAmmo)
-                {
-                    ReplenishBothPrimaryWeapons(client);
-                }
-            }
-            else if (g_IsWeaponSwitching[client] && g_cvDebugMode.BoolValue)
-            {
-                PrintToChat(client, "[DEBUG] Ammo change ignored during weapon switching");
-            }
-            
-            g_LastAmmo[client] = currentAmmo;
+            PrintToChat(client, "[DEBUG] Ammo: %d -> %d | Weapon: %s | Last: %s | Switch: %s | Upgrade: %s | NewPickup: %s",
+                g_LastAmmo[client], currentAmmo, currentWeapon, g_LastWeapon[client],
+                g_IsWeaponSwitching[client] ? "yes" : "no",
+                hasUpgradeAmmo ? "yes" : "no",
+                isNewWeaponPickup ? "yes" : "no");
         }
+        
+        // Check for valid ammo pickup (strict mode)
+        bool isSameWeapon = StrEqual(g_LastWeapon[client], currentWeapon, false);
+        bool isAmmoIncrease = (g_LastAmmo[client] != -1 && currentAmmo > g_LastAmmo[client]);
+        
+        // Check if we just picked up a new weapon of the same type
+        bool isNewWeaponPickup = (g_LastAmmo[client] == -1 || currentAmmo > g_LastAmmo[client] + 20);
+        
+        // Only trigger replenish if:
+        // 1. We're not switching weapons
+        // 2. We're still holding the same weapon
+        // 3. Ammo actually increased slightly (not a full reload from weapon pickup)
+        // 4. Not using upgraded ammo
+        // 5. Not picking up a new weapon (even if same type)
+        if (!g_IsWeaponSwitching[client] && 
+            isSameWeapon && 
+            isAmmoIncrease && 
+            !hasUpgradeAmmo &&
+            !isNewWeaponPickup)
+        {
+            if (g_cvDebugMode.BoolValue)
+                PrintToChat(client, "[DEBUG] Strict ammo pickup detected: %d -> %d", 
+                    g_LastAmmo[client], currentAmmo);
+            
+            ReplenishBothPrimaryWeapons(client);
+        }
+        else if (g_IsWeaponSwitching[client] && g_cvDebugMode.BoolValue)
+        {
+            PrintToChat(client, "[DEBUG] Ammo change ignored during weapon switching");
+        }
+        
+        // Update tracking variables
+        g_LastAmmo[client] = currentAmmo;
+        g_HadUpgradeAmmo[client] = hasUpgradeAmmo;
     }
     
     return Plugin_Continue;
