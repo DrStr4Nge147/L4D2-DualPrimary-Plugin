@@ -447,37 +447,37 @@ int RestoreWeaponState(int client, WeaponState weapon)
         // Apply upgrade ammo if needed
         if (weapon.hasIncendiary || weapon.hasExplosive)
         {
-            int upgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
+            int newUpgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
             
             if (weapon.hasIncendiary)
             {
-                upgradeBitVec |= (1 << 0); // Set incendiary bit
-                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
+                newUpgradeBitVec |= (1 << 0);  // Set incendiary bit
+                newUpgradeBitVec &= ~(1 << 1); // Clear explosive bit
             }
             else if (weapon.hasExplosive)
             {
-                upgradeBitVec |= (1 << 1); // Set explosive bit
-                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+                newUpgradeBitVec |= (1 << 1);  // Set explosive bit
+                newUpgradeBitVec &= ~(1 << 0); // Clear incendiary bit
             }
             
             // Apply the upgrade bit vector and ammo count
-            SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+            SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", newUpgradeBitVec);
             
             // Only set the upgraded ammo if we have some left
             if (weapon.ammo > 0)
             {
                 // First, clear any existing upgrade ammo to prevent stacking
-                int upgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
-                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
-                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
+                newUpgradeBitVec = GetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec");
+                newUpgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+                newUpgradeBitVec &= ~(1 << 1); // Clear explosive bit
                 
                 // Set the appropriate upgrade bit
                 if (weapon.hasIncendiary)
-                    upgradeBitVec |= (1 << 0);
+                    newUpgradeBitVec |= (1 << 0);
                 else if (weapon.hasExplosive)
-                    upgradeBitVec |= (1 << 1);
+                    newUpgradeBitVec |= (1 << 1);
                     
-                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", newUpgradeBitVec);
                 SetEntProp(newWeapon, Prop_Send, "m_nUpgradedPrimaryAmmoLoaded", weapon.ammo);
                 
                 // Make sure we have ammo in reserve for the upgrade type
@@ -495,9 +495,9 @@ int RestoreWeaponState(int client, WeaponState weapon)
             else
             {
                 // No more upgrade ammo, revert to regular ammo
-                upgradeBitVec &= ~(1 << 0); // Clear incendiary bit
-                upgradeBitVec &= ~(1 << 1); // Clear explosive bit
-                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", upgradeBitVec);
+                newUpgradeBitVec &= ~(1 << 0); // Clear incendiary bit
+                newUpgradeBitVec &= ~(1 << 1); // Clear explosive bit
+                SetEntProp(newWeapon, Prop_Send, "m_upgradeBitVec", newUpgradeBitVec);
                 
                 // Restore the clip to the last known value
                 SetEntProp(newWeapon, Prop_Send, "m_iClip1", weapon.clip);
