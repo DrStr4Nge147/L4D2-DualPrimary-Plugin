@@ -1,4 +1,4 @@
-# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.2)
+# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.4)
 
 A SourceMod plugin that allows players to store and switch between two primary weapons with complete state preservation including ammo, attachments, and upgrades.
 
@@ -18,6 +18,7 @@ A SourceMod plugin that allows players to store and switch between two primary w
 - **Key Binding Support**: Bind weapon switching to any key
 - **Multiple Command Types**: Chat, console, and server commands available
 - **Minimalist UI**: Clean, unobtrusive notifications
+- **Text HUD Display**: Shows a simple text overlay with stored weapons and their ammo counts
 
 ## Video Demonstration
 
@@ -82,6 +83,7 @@ Edit the auto-generated config file at `cfg/sourcemod/plugin.dual_primaries.cfg`
 | `sm_dualprimary_allowduplicates` | `0` | Allow duplicate primary weapons (0=disabled, 1=enabled) |
 | `sm_dualprimary_showwelcome` | `1` | Show welcome message on load (0=disabled, 1=enabled) |
 | `sm_dualprimary_cooldown` | `1.0` | Cooldown between weapon switches (in seconds) |
+| `sm_dualprimary_showhud` | `1` | Show text HUD overlay with stored weapons (0=disabled, 1=enabled) |
 
 ### Configuration Examples
 
@@ -90,6 +92,7 @@ Edit the auto-generated config file at `cfg/sourcemod/plugin.dual_primaries.cfg`
 sm_dualprimary_debug 0     // No debug spam
 sm_dualprimary_chathints 1     // Show weapon pickup messages
 sm_dualprimary_allowduplicates 0  // Prevent duplicate weapons
+sm_dualprimary_showhud 1      // Show text HUD with stored weapons
 ```
 
 ## How It Works
