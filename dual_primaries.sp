@@ -6,6 +6,7 @@
 #include <sourcemod>
 #include <sdktools>
 #include <keyvalues>
+#include <sdkhooks>
 
 #define MAX_PLAYERS 33
 #define CONFIG_PATH "data/dualprimaries_weapons.cfg"
@@ -15,7 +16,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.3"
+    version = "1.5.4"
 };
 
 // Weapon state structure
@@ -47,6 +48,7 @@ ConVar g_cvChatHints;
 ConVar g_cvAllowDuplicates;
 ConVar g_cvSwitchCooldown;
 ConVar g_cvShowWelcome;
+ConVar g_cvShowHUD; // New ConVar for HUD toggle
 
 // Campaign and round tracking
 bool g_IsCampaignRestart = false;
@@ -54,7 +56,7 @@ int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
 // Plugin version for tracking reloads
-#define PLUGIN_VERSION "1.5.3"
+#define PLUGIN_VERSION "1.5.4"
 char g_LastPluginVersion[32];
 
 void DisplayWelcomeMessage()
@@ -71,10 +73,93 @@ void DisplayWelcomeMessage()
     else
         chatHintsStatus = "\x02DISABLED\x01 - No chat notifications";
     
-    PrintToChatAll("\x04[DUAL PRIMARIES] \x01v%s | Duplicates: %s | Hints: %s", 
+    char hudStatus[64];
+    if (g_cvShowHUD.BoolValue)
+        hudStatus = "\x04ENABLED\x01 - HUD indicator is on";
+    else
+        hudStatus = "\x02DISABLED\x01 - HUD indicator is off";
+    
+    PrintToChatAll("\x04[DUAL PRIMARIES] \x01v%s | Duplicates: %s | Hints: %s | HUD: %s", 
         PLUGIN_VERSION,
         duplicateStatus,
-        chatHintsStatus);
+        chatHintsStatus,
+        hudStatus);
+}
+
+void UpdateHUD(int client)
+{
+    if (!g_cvShowHUD.BoolValue || !IsClientInGame(client) || IsFakeClient(client))
+        return;
+        
+    char hudText[256];
+    char weaponName1[64] = "None";
+    char weaponName2[64] = "None";
+    
+    // Get weapon names
+    if (g_PrimarySlot1[client].isValid)
+    {
+        GetWeaponDisplayName(g_PrimarySlot1[client].classname, weaponName1, sizeof(weaponName1));
+        if (g_PrimarySlot1[client].clip > 0)
+            Format(weaponName1, sizeof(weaponName1), "%s (%d)", weaponName1, g_PrimarySlot1[client].clip);
+    }
+    
+    if (g_PrimarySlot2[client].isValid)
+    {
+        GetWeaponDisplayName(g_PrimarySlot2[client].classname, weaponName2, sizeof(weaponName2));
+        if (g_PrimarySlot2[client].clip > 0)
+            Format(weaponName2, sizeof(weaponName2), "%s (%d)", weaponName2, g_PrimarySlot2[client].clip);
+    }
+    
+    // Format HUD text - Show only stored weapons
+    Format(hudText, sizeof(hudText), "Stored Weapons:\n1. %s\n2. %s", 
+        weaponName1, 
+        weaponName2);
+    
+    // Display HUD
+    PrintHintText(client, hudText);
+}
+
+void GetWeaponDisplayName(const char[] classname, char[] displayName, int maxlen)
+{
+    if (StrEqual(classname, "weapon_rifle")) strcopy(displayName, maxlen, "M16");
+    else if (StrEqual(classname, "weapon_rifle_ak47")) strcopy(displayName, maxlen, "AK-47");
+    else if (StrEqual(classname, "weapon_rifle_desert")) strcopy(displayName, maxlen, "Desert Rifle");
+    else if (StrEqual(classname, "weapon_rifle_sg552")) strcopy(displayName, maxlen, "SG552");
+    else if (StrEqual(classname, "weapon_smg")) strcopy(displayName, maxlen, "SMG");
+    else if (StrEqual(classname, "weapon_smg_silenced")) strcopy(displayName, maxlen, "Silenced SMG");
+    else if (StrEqual(classname, "weapon_smg_mp5")) strcopy(displayName, maxlen, "MP5");
+    else if (StrEqual(classname, "weapon_pumpshotgun")) strcopy(displayName, maxlen, "Pump Shotgun");
+    else if (StrEqual(classname, "weapon_shotgun_chrome")) strcopy(displayName, maxlen, "Chrome Shotgun");
+    else if (StrEqual(classname, "weapon_autoshotgun")) strcopy(displayName, maxlen, "Auto Shotgun");
+    else if (StrEqual(classname, "weapon_shotgun_spas")) strcopy(displayName, maxlen, "SPAS-12");
+    else if (StrEqual(classname, "weapon_hunting_rifle")) strcopy(displayName, maxlen, "Hunting Rifle");
+    else if (StrEqual(classname, "weapon_sniper_military")) strcopy(displayName, maxlen, "Military Sniper");
+    else if (StrEqual(classname, "weapon_sniper_scout")) strcopy(displayName, maxlen, "Scout");
+    else if (StrEqual(classname, "weapon_sniper_awp")) strcopy(displayName, maxlen, "AWP");
+    else if (StrEqual(classname, "weapon_rifle_m60")) strcopy(displayName, maxlen, "M60");
+    else if (StrEqual(classname, "weapon_grenade_launcher")) strcopy(displayName, maxlen, "Grenade Launcher");
+    else 
+    {
+        // Default: remove 'weapon_' prefix and format nicely
+        strcopy(displayName, maxlen, classname);
+        ReplaceString(displayName, maxlen, "weapon_", "", false);
+        ReplaceString(displayName, maxlen, "_", " ", false);
+        
+        // Capitalize first letter of each word
+        bool capitalize = true;
+        for (int i = 0; i < strlen(displayName); i++)
+        {
+            if (capitalize)
+            {
+                displayName[i] = CharToUpper(displayName[i]);
+                capitalize = false;
+            }
+            else if (displayName[i] == ' ')
+            {
+                capitalize = true;
+            }
+        }
+    }
 }
 
 public Action Cmd_DualHelp(int client, int args)
@@ -117,6 +202,7 @@ public void OnPluginStart()
     g_cvDebugMode = CreateConVar("sm_dualprimary_debug", "0", "Enable debug output (0=disabled, 1=verbose, 2=debug)", FCVAR_NOTIFY, true, 0.0, true, 2.0);
     g_cvChatHints = CreateConVar("sm_dualprimary_chathints", "0", "Enable chat notifications (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvAllowDuplicates = CreateConVar("sm_dualprimary_allowduplicates", "0", "Allow carrying duplicate weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvShowHUD = CreateConVar("sm_dualprimary_showhud", "1", "Show HUD indicator for stored weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvSwitchCooldown = CreateConVar("sm_dualprimary_cooldown", "1", "Cooldown between weapon switches (in seconds)", FCVAR_NOTIFY, true, 0.1, true, 5.0);
     g_cvShowWelcome = CreateConVar("sm_dualprimary_showwelcome", "1", "Show welcome message on plugin load (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
@@ -678,6 +764,12 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     // Save to config file in real-time
     SavePlayerWeaponStateToConfig(client);
     
+    // Update HUD after storing
+    if (g_cvShowHUD.BoolValue)
+    {
+        UpdateHUD(client);
+    }
+    
     return Plugin_Stop;
 }
 
@@ -1066,7 +1158,24 @@ public Action Cmd_SwitchPrimary(int client, int args)
     // Clear the switching flag after a short delay to allow weapon switch to complete
     CreateTimer(1.0, Timer_ClearSwitchingFlag, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 
+    // Update HUD after switching
+    if (g_cvShowHUD.BoolValue)
+    {
+        CreateTimer(0.1, Timer_UpdateHUD, GetClientUserId(client));
+    }
+    
     return Plugin_Handled;
+}
+
+// Timer to update HUD after a short delay
+public Action Timer_UpdateHUD(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (client > 0 && IsClientInGame(client) && !IsFakeClient(client))
+    {
+        UpdateHUD(client);
+    }
+    return Plugin_Stop;
 }
 
 // ----------------------
