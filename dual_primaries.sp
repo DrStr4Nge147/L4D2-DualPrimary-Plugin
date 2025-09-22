@@ -248,9 +248,13 @@ public void OnPluginStart()
     HookEvent("map_transition", Event_MapTransition);
     HookEvent("finale_win", Event_FinaleWin);
     HookEvent("mission_lost", Event_MissionLost);
+    
+    // Precache sounds
+    PrecacheSound("items/itempickup.wav");
+    PrecacheSound("buttons/button10.wav");
     HookEvent("player_death", Event_PlayerDeath);
     
-    // Create a timer to check for ammo changes since ammo_pickup event doesn't exist in L4D2
+    // Create a timer to check for ammo changes since itempickup event doesn't exist in L4D2
     CreateTimer(0.5, Timer_CheckAmmoChanges, _, TIMER_REPEAT);
     
     // Create a timer to periodically check for weapon changes
@@ -656,6 +660,63 @@ public Action Timer_CheckAmmoChanges(Handle timer)
         int upgradeBitVec = GetEntProp(weapon, Prop_Send, "m_upgradeBitVec");
         bool hasUpgradeAmmo = (upgradeBitVec & (1 << 0)) || (upgradeBitVec & (1 << 1));
         
+        // Get current clip ammo and check if weapon is being reloaded
+        int clip = GetEntProp(weapon, Prop_Send, "m_iClip1");
+        bool isReloading = view_as<bool>(GetEntProp(weapon, Prop_Send, "m_bInReload"));
+        
+        if (g_cvDebugMode.BoolValue && clip <= 0 && currentAmmo <= 0) {
+            PrintToChat(client, "[DEBUG] Weapon empty - Clip: %d, Reserve: %d, Reloading: %s, Switching: %s, LastAmmo: %d", 
+                clip, currentAmmo, isReloading ? "yes" : "no", 
+                g_IsWeaponSwitching[client] ? "yes" : "no", g_LastAmmo[client]);
+        }
+        
+        // Check if current weapon is completely out of ammo (both clip and reserve)
+        // and should auto-switch
+        if (clip <= 0 && currentAmmo <= 0 && !isReloading && !g_IsWeaponSwitching[client]) {
+            // Only auto-switch if we have another primary weapon available and it has ammo
+            if (g_PrimarySlot1[client].isValid && g_PrimarySlot2[client].isValid) {
+                // Check if the other weapon has any ammo
+                bool otherWeaponHasAmmo = false;
+                
+                // Determine which slot we're currently using and check the other one
+                bool usingSlot1 = StrEqual(currentWeapon, g_PrimarySlot1[client].classname, false);
+                
+                if (usingSlot1) {
+                    // Check if slot 2 has ammo
+                    otherWeaponHasAmmo = (g_PrimarySlot2[client].ammo > 0 || g_PrimarySlot2[client].clip > 0);
+                } else {
+                    // Check if slot 1 has ammo
+                    otherWeaponHasAmmo = (g_PrimarySlot1[client].ammo > 0 || g_PrimarySlot1[client].clip > 0);
+                }
+                
+                if (!otherWeaponHasAmmo) {
+                    if (g_cvDebugMode.BoolValue) {
+                        PrintToChat(client, "[DEBUG] Both primary weapons are empty - not switching");
+                    }
+                    continue;
+                }
+                
+                // Switch to the other primary weapon
+                if (usingSlot1) {
+                    if (g_cvDebugMode.BoolValue) {
+                        PrintToChat(client, "[DEBUG] Auto-switching to secondary primary (completely out of ammo)");
+                    }
+                    FakeClientCommand(client, "sm_switchprimary");
+                } else if (!usingSlot1) {
+                    if (g_cvDebugMode.BoolValue) {
+                        PrintToChat(client, "[DEBUG] Auto-switching to primary weapon (completely out of ammo)");
+                    }
+                    FakeClientCommand(client, "sm_switchprimary");
+                }
+                
+                // Update last ammo and skip the rest of the ammo check to prevent multiple switches
+                g_LastAmmo[client] = currentAmmo;
+                g_IsWeaponSwitching[client] = true;
+                CreateTimer(0.1, Timer_ResetWeaponSwitch, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+                continue;
+            }
+        }
+        
         // STRICT AMMO REPLENISHMENT RULES:
         // 1. Only trigger on actual ammo pickups (ammo increase without weapon change)
         // 2. Never trigger during weapon switches
@@ -828,6 +889,21 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
             SavePlayerWeaponStateToConfig(client);
         }
     }
+}
+
+// ----------------------
+// TIMER: Reset Weapon Switch Flag
+// ----------------------
+public Action Timer_ResetWeaponSwitch(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (client > 0 && client <= MaxClients) {
+        g_IsWeaponSwitching[client] = false;
+        if (g_cvDebugMode.BoolValue) {
+            PrintToChat(client, "[DEBUG] Weapon switch cooldown reset");
+        }
+    }
+    return Plugin_Stop;
 }
 
 // ----------------------
@@ -1087,7 +1163,7 @@ public Action Cmd_SwitchPrimary(int client, int args)
     g_LastSwitchTime[client] = currentTime;
     
     // Play switch sound
-    EmitSoundToClient(client, "items/ammo_pickup.wav");
+    EmitSoundToClient(client, "items/itempickup.wav");
     
     // Mark that we're switching weapons to prevent ammo replenishment
     g_IsWeaponSwitching[client] = true;
