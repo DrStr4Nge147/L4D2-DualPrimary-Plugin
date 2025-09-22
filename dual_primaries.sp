@@ -9,7 +9,7 @@
 #include <sdkhooks>
 
 #define MAX_PLAYERS 33
-#define CONFIG_PATH "data/dualprimaries_weapons.cfg"
+#define CONFIG_PATH "addons/sourcemod/data/dualprimaries_weapons.cfg"
 
 public Plugin myinfo = 
 {
