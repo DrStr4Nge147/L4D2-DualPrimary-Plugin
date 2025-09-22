@@ -1,4 +1,4 @@
-# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.4)
+# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.6)
 
 A SourceMod plugin that allows players to store and switch between two primary weapons with complete state preservation including ammo, attachments, and upgrades.
 
@@ -13,6 +13,8 @@ A SourceMod plugin that allows players to store and switch between two primary w
 - **Dual Weapon Storage**: Store two primary weapons and switch between them instantly
 - **Complete State Preservation**: Maintains ammo count, clip size, and weapon upgrades (laser, incendiary, explosive)
 - **Automatic Storage**: Automatically stores your previous weapon when picking up a new one
+- **Smart Auto-Switching**: Automatically switches to your other primary when current weapon is depleted
+- **Special Weapon Support**: Full support for M60 and Grenade Launcher auto-switching
 - **Manual Storage**: Manually store weapons using commands
 - **Configurable Output**: Toggle debug mode and chat hints on/off
 - **Key Binding Support**: Bind weapon switching to any key
@@ -84,6 +86,8 @@ Edit the auto-generated config file at `cfg/sourcemod/plugin.dual_primaries.cfg`
 | `sm_dualprimary_showwelcome` | `1` | Show welcome message on load (0=disabled, 1=enabled) |
 | `sm_dualprimary_cooldown` | `1.0` | Cooldown between weapon switches (in seconds) |
 | `sm_dualprimary_showhud` | `1` | Show text HUD overlay with stored weapons (0=disabled, 1=enabled) |
+| `sm_dualprimary_autoswitch` | `1` | Auto-switch to other primary when ammo is depleted (0=disabled, 1=enabled) |
+| `sm_dualprimary_autoswitch_special` | `1` | Auto-switch special weapons when ammo is depleted and dropped (M60/Grenade Launcher) (0=disabled, 1=enabled) |
 
 ### Configuration Examples
 
@@ -93,6 +97,8 @@ sm_dualprimary_debug 0     // No debug spam
 sm_dualprimary_chathints 1     // Show weapon pickup messages
 sm_dualprimary_allowduplicates 0  // Prevent duplicate weapons
 sm_dualprimary_showhud 1      // Show text HUD with stored weapons
+sm_dualprimary_autoswitch 1   // Auto-switch when ammo is depleted
+sm_dualprimary_autoswitch_special 1  // Auto-switch for M60/Grenade Launcher
 ```
 
 ## How It Works
