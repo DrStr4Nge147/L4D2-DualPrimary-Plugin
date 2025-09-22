@@ -16,7 +16,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.4"
+    version = "1.5.6"
 };
 
 // Weapon state structure
@@ -45,6 +45,8 @@ bool g_HadUpgradeAmmo[MAX_PLAYERS]; // Track if weapon had upgrade ammo in the p
 // ConVars for toggles
 ConVar g_cvDebugMode;
 ConVar g_cvChatHints;
+ConVar g_cvAutoSwitch;
+ConVar g_cvAutoSwitchSpecial;
 ConVar g_cvAllowDuplicates;
 ConVar g_cvSwitchCooldown;
 ConVar g_cvShowWelcome;
@@ -56,7 +58,7 @@ int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
 // Plugin version for tracking reloads
-#define PLUGIN_VERSION "1.5.4"
+#define PLUGIN_VERSION "1.5.6"
 char g_LastPluginVersion[32];
 
 void DisplayWelcomeMessage()
@@ -205,6 +207,8 @@ public void OnPluginStart()
     g_cvShowHUD = CreateConVar("sm_dualprimary_showhud", "1", "Show HUD indicator for stored weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvSwitchCooldown = CreateConVar("sm_dualprimary_cooldown", "1", "Cooldown between weapon switches (in seconds)", FCVAR_NOTIFY, true, 0.1, true, 5.0);
     g_cvShowWelcome = CreateConVar("sm_dualprimary_showwelcome", "1", "Show welcome message on plugin load (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAutoSwitch = CreateConVar("sm_dualprimary_autoswitch", "1", "Auto-switch to other primary when dropping a weapon (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAutoSwitchSpecial = CreateConVar("sm_dualprimary_autoswitch_special", "1", "Auto-switch when dropping special weapons (M60/Grenade Launcher) (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
     // Show welcome message if this is the first load or a reload
     if (!StrEqual(g_LastPluginVersion, PLUGIN_VERSION))
@@ -619,11 +623,21 @@ public Action Timer_CheckWeaponChanges(Handle timer)
                 if (g_cvDebugMode.BoolValue)
                     PrintToChat(client, "[DEBUG] Weapon change detected: %s -> %s", g_LastWeapon[client], currentWeapon);
                 
-                // Handle weapon change
-                DataPack pack = new DataPack();
-                pack.WriteCell(GetClientUserId(client));
-                pack.WriteString(currentWeapon);
-                CreateTimer(0.1, Timer_HandleWeaponPickup, pack, TIMER_FLAG_NO_MAPCHANGE);
+                // Only handle weapon change if auto-switch is enabled or we're not currently switching weapons
+                if (g_cvAutoSwitch.BoolValue || !g_IsWeaponSwitching[client]) {
+                    if (g_cvDebugMode.BoolValue) {
+                        PrintToChat(client, "[DEBUG] Processing weapon change: %s -> %s (Auto-switch: %s)", 
+                            g_LastWeapon[client], currentWeapon, 
+                            g_cvAutoSwitch.BoolValue ? "enabled" : "disabled");
+                    }
+                    
+                    DataPack pack = new DataPack();
+                    pack.WriteCell(GetClientUserId(client));
+                    pack.WriteString(currentWeapon);
+                    CreateTimer(0.1, Timer_HandleWeaponPickup, pack, TIMER_FLAG_NO_MAPCHANGE);
+                } else if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Skipping weapon change - auto-switch is disabled");
+                }
             }
             
             strcopy(g_LastWeapon[client], sizeof(g_LastWeapon[]), currentWeapon);
@@ -696,17 +710,22 @@ public Action Timer_CheckAmmoChanges(Handle timer)
                     continue;
                 }
                 
-                // Switch to the other primary weapon
-                if (usingSlot1) {
-                    if (g_cvDebugMode.BoolValue) {
-                        PrintToChat(client, "[DEBUG] Auto-switching to secondary primary (completely out of ammo)");
+                // Only auto-switch if enabled in settings
+                if (g_cvAutoSwitch.BoolValue) {
+                    // Switch to the other primary weapon
+                    if (usingSlot1) {
+                        if (g_cvDebugMode.BoolValue) {
+                            PrintToChat(client, "[DEBUG] Auto-switching to secondary primary (completely out of ammo)");
+                        }
+                        FakeClientCommand(client, "sm_switchprimary");
+                    } else if (!usingSlot1) {
+                        if (g_cvDebugMode.BoolValue) {
+                            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon (completely out of ammo)");
+                        }
+                        FakeClientCommand(client, "sm_switchprimary");
                     }
-                    FakeClientCommand(client, "sm_switchprimary");
-                } else if (!usingSlot1) {
-                    if (g_cvDebugMode.BoolValue) {
-                        PrintToChat(client, "[DEBUG] Auto-switching to primary weapon (completely out of ammo)");
-                    }
-                    FakeClientCommand(client, "sm_switchprimary");
+                } else if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Would auto-switch but auto-switch is disabled");
                 }
                 
                 // Update last ammo and skip the rest of the ammo check to prevent multiple switches
@@ -825,6 +844,15 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     // Save to config file in real-time
     SavePlayerWeaponStateToConfig(client);
     
+    // Auto-switch to the new weapon if enabled and not already switching
+    if (g_cvAutoSwitch.BoolValue && !g_IsWeaponSwitching[client]) {
+        if (g_cvDebugMode.BoolValue) {
+            PrintToChat(client, "[DEBUG] Auto-switching to newly equipped weapon (enabled: %s)", 
+                g_cvAutoSwitch.BoolValue ? "yes" : "no");
+        }
+        CreateTimer(0.1, Timer_SwitchToOtherPrimary, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+    }
+    
     // Update HUD after storing
     if (g_cvShowHUD.BoolValue)
     {
@@ -863,12 +891,59 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
 
     char classname[64];
     GetEntityClassname(weapon, classname, sizeof(classname));
+    
+    if (g_cvDebugMode.BoolValue) {
+        PrintToChat(client, "[DEBUG] Weapon dropped: %s (IsPrimary: %s, IsSpecial: %s)", 
+            classname, 
+            IsPrimaryWeapon(classname) ? "yes" : "no",
+            IsSpecialWeapon(classname) ? "yes" : "no");
+            
+        // Debug slot states
+        PrintToChat(client, "[DEBUG] Slot1: %s (valid: %s)", 
+            g_PrimarySlot1[client].isValid ? g_PrimarySlot1[client].classname : "none", 
+            g_PrimarySlot1[client].isValid ? "yes" : "no");
+        PrintToChat(client, "[DEBUG] Slot2: %s (valid: %s)", 
+            g_PrimarySlot2[client].isValid ? g_PrimarySlot2[client].classname : "none", 
+            g_PrimarySlot2[client].isValid ? "yes" : "no");
+    }
 
     if (IsPrimaryWeapon(classname))
     {
-        // Only store in slot 2 if we don't already have a weapon stored there
-        // and this weapon is different from what's currently in slot 1
-        // Also check for duplicate restriction
+        bool isSpecialWeapon = IsSpecialWeapon(classname);
+        
+        // For special weapons (M60/Grenade Launcher) that are auto-dropped when empty
+        if (isSpecialWeapon) {
+            // Clear the weapon state for the dropped special weapon
+            bool wasInSlot1 = (g_PrimarySlot1[client].isValid && StrEqual(g_PrimarySlot1[client].classname, classname, false));
+            bool wasInSlot2 = (g_PrimarySlot2[client].isValid && StrEqual(g_PrimarySlot2[client].classname, classname, false));
+            
+            if (wasInSlot1) {
+                ClearWeaponState(g_PrimarySlot1[client]);
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Cleared special weapon from slot 1");
+                }
+            } else if (wasInSlot2) {
+                ClearWeaponState(g_PrimarySlot2[client]);
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Cleared special weapon from slot 2");
+                }
+            }
+            
+            // Auto-switch to the other primary weapon if available and auto-switch is enabled for special weapons
+            if (g_cvAutoSwitchSpecial.BoolValue && (g_PrimarySlot1[client].isValid || g_PrimarySlot2[client].isValid)) {
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Auto-switching from special weapon (enabled: %s)", 
+                        g_cvAutoSwitchSpecial.BoolValue ? "yes" : "no");
+                }
+                CreateTimer(0.1, Timer_SwitchToOtherPrimary, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+            }
+            
+            // Save the updated state
+            SavePlayerWeaponStateToConfig(client);
+            return;
+        }
+        
+        // Original behavior for regular primary weapons
         if (!g_PrimarySlot2[client].isValid && 
             g_PrimarySlot1[client].isValid && 
             !StrEqual(classname, g_PrimarySlot1[client].classname, false))
@@ -887,8 +962,43 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
             
             // Save to config file in real-time
             SavePlayerWeaponStateToConfig(client);
+            
+            // Auto-switch to the new weapon if enabled
+            if (g_cvAutoSwitch.BoolValue) {
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Auto-switching to newly stored weapon (enabled: %s)", 
+                        g_cvAutoSwitch.BoolValue ? "yes" : "no");
+                }
+                CreateTimer(0.1, Timer_SwitchToOtherPrimary, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+            }
         }
     }
+}
+
+// ----------------------
+// TIMER: Switch to other primary weapon
+// ----------------------
+public Action Timer_SwitchToOtherPrimary(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (client <= 0 || client > MaxClients || !IsClientInGame(client) || !IsPlayerAlive(client)) {
+        return Plugin_Stop;
+    }
+    
+    // Check if we have a primary weapon in either slot
+    if (g_PrimarySlot1[client].isValid) {
+        if (g_cvDebugMode.BoolValue) {
+            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 1");
+        }
+        FakeClientCommand(client, "sm_switchprimary");
+    } else if (g_PrimarySlot2[client].isValid) {
+        if (g_cvDebugMode.BoolValue) {
+            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 2");
+        }
+        FakeClientCommand(client, "sm_switchprimary");
+    }
+    
+    return Plugin_Stop;
 }
 
 // ----------------------
@@ -1835,6 +1945,16 @@ void DeleteConfigFile()
     }
 }
 
+bool IsSpecialWeapon(const char[] classname)
+{
+    return (StrEqual(classname, "weapon_m60", false) ||
+            StrEqual(classname, "weapon_rifle_m60", false) ||
+            StrEqual(classname, "weapon_grenade_launcher", false) ||
+            StrEqual(classname, "m60", false) ||
+            StrEqual(classname, "rifle_m60", false) ||
+            StrEqual(classname, "grenade_launcher", false));
+}
+
 bool IsPrimaryWeapon(const char[] classname)
 {
     return (StrContains(classname, "weapon_rifle", false) != -1
@@ -1842,6 +1962,8 @@ bool IsPrimaryWeapon(const char[] classname)
          || StrContains(classname, "weapon_shotgun", false) != -1
          || StrContains(classname, "weapon_sniper", false) != -1
          || StrEqual(classname, "weapon_m60", false)
+         || StrEqual(classname, "weapon_rifle_m60", false)
+         || StrEqual(classname, "weapon_grenade_launcher", false)
          // Also check for item pickup names (without weapon_ prefix)
          || StrContains(classname, "rifle", false) != -1
          || StrContains(classname, "smg", false) != -1
@@ -1852,7 +1974,10 @@ bool IsPrimaryWeapon(const char[] classname)
          || StrEqual(classname, "hunting_rifle", false)
          || StrEqual(classname, "sniper_military", false)
          || StrEqual(classname, "smg_silenced", false)
-         || StrEqual(classname, "smg_mp5", false));
+         || StrEqual(classname, "smg_mp5", false)
+         || StrEqual(classname, "m60", false)
+         || StrEqual(classname, "rifle_m60", false)
+         || StrEqual(classname, "grenade_launcher", false));
 }
 
 bool IsDuplicateWeapon(int client, const char[] weaponClassname)
