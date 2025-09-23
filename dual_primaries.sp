@@ -16,7 +16,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.6"
+    version = "1.5.7"
 };
 
 // Weapon state structure
@@ -58,7 +58,7 @@ int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
 // Plugin version for tracking reloads
-#define PLUGIN_VERSION "1.5.6"
+#define PLUGIN_VERSION "1.5.7"
 char g_LastPluginVersion[32];
 
 void DisplayWelcomeMessage()
@@ -207,8 +207,8 @@ public void OnPluginStart()
     g_cvShowHUD = CreateConVar("sm_dualprimary_showhud", "1", "Show HUD indicator for stored weapons (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_cvSwitchCooldown = CreateConVar("sm_dualprimary_cooldown", "1", "Cooldown between weapon switches (in seconds)", FCVAR_NOTIFY, true, 0.1, true, 5.0);
     g_cvShowWelcome = CreateConVar("sm_dualprimary_showwelcome", "1", "Show welcome message on plugin load (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-    g_cvAutoSwitch = CreateConVar("sm_dualprimary_autoswitch", "1", "Auto-switch to other primary when dropping a weapon (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-    g_cvAutoSwitchSpecial = CreateConVar("sm_dualprimary_autoswitch_special", "1", "Auto-switch when dropping special weapons (M60/Grenade Launcher) (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAutoSwitch = CreateConVar("sm_dualprimary_autoswitch", "1", "Auto-switch to other primary when ammo is depleted (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_cvAutoSwitchSpecial = CreateConVar("sm_dualprimary_autoswitch_special", "1", "Auto-switch special weapons when ammo is depleted and dropped (M60/Grenade Launcher) (0=disabled, 1=enabled)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
     // Show welcome message if this is the first load or a reload
     if (!StrEqual(g_LastPluginVersion, PLUGIN_VERSION))
@@ -929,13 +929,18 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
                 }
             }
             
-            // Auto-switch to the other primary weapon if available and auto-switch is enabled for special weapons
+            // For special weapons, force switch to the other primary weapon
             if (g_cvAutoSwitchSpecial.BoolValue && (g_PrimarySlot1[client].isValid || g_PrimarySlot2[client].isValid)) {
                 if (g_cvDebugMode.BoolValue) {
-                    PrintToChat(client, "[DEBUG] Auto-switching from special weapon (enabled: %s)", 
-                        g_cvAutoSwitchSpecial.BoolValue ? "yes" : "no");
+                    PrintToChat(client, "[DEBUG] Special weapon dropped, forcing switch to other primary");
                 }
-                CreateTimer(0.1, Timer_SwitchToOtherPrimary, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+                
+                // Create a timer to handle the switch after a short delay
+                // This ensures the weapon drop is fully processed first
+                DataPack pack = new DataPack();
+                pack.WriteCell(GetClientUserId(client));
+                pack.WriteCell(true);  // Force switch for special weapons
+                CreateTimer(0.2, Timer_ForceSwitchWeapon, pack, TIMER_FLAG_NO_MAPCHANGE);
             }
             
             // Save the updated state
@@ -976,7 +981,35 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
 }
 
 // ----------------------
-// TIMER: Switch to other primary weapon
+// TIMER: Force switch weapon (used for special weapons)
+// ----------------------
+public Action Timer_ForceSwitchWeapon(Handle timer, DataPack pack)
+{
+    pack.Reset();
+    int client = GetClientOfUserId(pack.ReadCell());
+    bool forceSwitch = view_as<bool>(pack.ReadCell());
+    delete pack;
+    
+    if (client <= 0 || client > MaxClients || !IsClientInGame(client) || !IsPlayerAlive(client)) {
+        return Plugin_Stop;
+    }
+    
+    // For special weapons, we want to switch to the other primary regardless of current weapon
+    if (forceSwitch) {
+        if (g_PrimarySlot1[client].isValid || g_PrimarySlot2[client].isValid) {
+            if (g_cvDebugMode.BoolValue) {
+                PrintToChat(client, "[DEBUG] Force switching to other primary weapon");
+            }
+            FakeClientCommand(client, "sm_switchprimary");
+        }
+        return Plugin_Stop;
+    }
+    
+    return Plugin_Stop;
+}
+
+// ----------------------
+// TIMER: Switch to other primary weapon (for regular weapons)
 // ----------------------
 public Action Timer_SwitchToOtherPrimary(Handle timer, any userid)
 {
@@ -985,15 +1018,23 @@ public Action Timer_SwitchToOtherPrimary(Handle timer, any userid)
         return Plugin_Stop;
     }
     
-    // Check if we have a primary weapon in either slot
+    // Don't switch if we're already holding a primary weapon
+    int activeWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+    if (activeWeapon > 0) {
+        char classname[64];
+        GetEntityClassname(activeWeapon, classname, sizeof(classname));
+        if (IsPrimaryWeapon(classname)) {
+            if (g_cvDebugMode.BoolValue) {
+                PrintToChat(client, "[DEBUG] Already holding a primary weapon, skipping auto-switch");
+            }
+            return Plugin_Stop;
+        }
+    }
+    
+    // Only switch if we have a valid weapon in slot 1
     if (g_PrimarySlot1[client].isValid) {
         if (g_cvDebugMode.BoolValue) {
             PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 1");
-        }
-        FakeClientCommand(client, "sm_switchprimary");
-    } else if (g_PrimarySlot2[client].isValid) {
-        if (g_cvDebugMode.BoolValue) {
-            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 2");
         }
         FakeClientCommand(client, "sm_switchprimary");
     }
