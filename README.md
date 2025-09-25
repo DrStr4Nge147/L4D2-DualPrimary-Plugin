@@ -1,4 +1,4 @@
-# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.7)
+# Dual Primaries Plugin for Left 4 Dead 2 (v1.5.8)
 
 A SourceMod plugin that allows players to store and switch between two primary weapons with complete state preservation including ammo, attachments, and upgrades.
 
