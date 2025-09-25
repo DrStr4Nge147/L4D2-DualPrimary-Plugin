@@ -16,7 +16,7 @@ public Plugin myinfo =
     name = "Dual Primaries",
     author = "DrStr4Nge147",
     description = "Allows players to carry two primary weapons in L4D2 with persistence across maps",
-    version = "1.5.7"
+    version = "1.5.8"
 };
 
 // Weapon state structure
@@ -41,6 +41,8 @@ int g_LastAmmo[MAX_PLAYERS];
 bool g_IsWeaponSwitching[MAX_PLAYERS];
 float g_LastSwitchTime[MAX_PLAYERS];
 bool g_HadUpgradeAmmo[MAX_PLAYERS]; // Track if weapon had upgrade ammo in the previous check
+bool g_IsMapTransitionActive = false; // Track when a map transition is in progress
+bool g_SawMapTransitionEvent = false; // Track if the current map ended via campaign progression
 
 // ConVars for toggles
 ConVar g_cvDebugMode;
@@ -58,7 +60,7 @@ int g_RoundRestartCount = 0;
 int g_LastRoundRestartTime = 0;
 
 // Plugin version for tracking reloads
-#define PLUGIN_VERSION "1.5.7"
+#define PLUGIN_VERSION "1.5.8"
 char g_LastPluginVersion[32];
 
 void DisplayWelcomeMessage()
@@ -253,9 +255,7 @@ public void OnPluginStart()
     HookEvent("finale_win", Event_FinaleWin);
     HookEvent("mission_lost", Event_MissionLost);
     
-    // Precache sounds
-    PrecacheSound("items/itempickup.wav");
-    PrecacheSound("buttons/button10.wav");
+    // Precache sounds are handled per-map in OnMapStart
     HookEvent("player_death", Event_PlayerDeath);
     
     // Create a timer to check for ammo changes since itempickup event doesn't exist in L4D2
@@ -305,6 +305,12 @@ public void OnClientPutInServer(int client)
 
 public void OnMapStart()
 {
+    g_IsMapTransitionActive = false;
+    g_SawMapTransitionEvent = false;
+
+    PrecacheSound("items/itempickup.wav", true);
+    PrecacheSound("buttons/button10.wav", true);
+
     // Don't immediately reset campaign restart flag - let it persist for a bit
     // Only reset if it's been more than 10 seconds since last round restart
     int currentTime = GetTime();
@@ -712,17 +718,23 @@ public Action Timer_CheckAmmoChanges(Handle timer)
                 
                 // Only auto-switch if enabled in settings
                 if (g_cvAutoSwitch.BoolValue) {
-                    // Switch to the other primary weapon
-                    if (usingSlot1) {
+                    if (g_IsMapTransitionActive) {
                         if (g_cvDebugMode.BoolValue) {
-                            PrintToChat(client, "[DEBUG] Auto-switching to secondary primary (completely out of ammo)");
+                            PrintToChat(client, "[DEBUG] Auto-switch suppressed during map transition");
                         }
-                        FakeClientCommand(client, "sm_switchprimary");
-                    } else if (!usingSlot1) {
-                        if (g_cvDebugMode.BoolValue) {
-                            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon (completely out of ammo)");
+                    } else {
+                        // Switch to the other primary weapon
+                        if (usingSlot1) {
+                            if (g_cvDebugMode.BoolValue) {
+                                PrintToChat(client, "[DEBUG] Auto-switching to secondary primary (completely out of ammo)");
+                            }
+                            FakeClientCommand(client, "sm_switchprimary");
+                        } else {
+                            if (g_cvDebugMode.BoolValue) {
+                                PrintToChat(client, "[DEBUG] Auto-switching to primary weapon (completely out of ammo)");
+                            }
+                            FakeClientCommand(client, "sm_switchprimary");
                         }
-                        FakeClientCommand(client, "sm_switchprimary");
                     }
                 } else if (g_cvDebugMode.BoolValue) {
                     PrintToChat(client, "[DEBUG] Would auto-switch but auto-switch is disabled");
@@ -801,6 +813,9 @@ public Action Timer_HandleWeaponPickup(Handle timer, DataPack pack)
     
     int client = GetClientOfUserId(userid);
     if (client <= 0 || !IsClientInGame(client) || !IsPlayerAlive(client))
+        return Plugin_Stop;
+
+    if (g_IsMapTransitionActive)
         return Plugin_Stop;
     
     int currentWeapon = GetPlayerWeaponSlot(client, 0);
@@ -969,7 +984,7 @@ public void Event_WeaponDrop(Event event, const char[] name, bool dontBroadcast)
             SavePlayerWeaponStateToConfig(client);
             
             // Auto-switch to the new weapon if enabled
-            if (g_cvAutoSwitch.BoolValue) {
+            if (g_cvAutoSwitch.BoolValue && !g_IsMapTransitionActive) {
                 if (g_cvDebugMode.BoolValue) {
                     PrintToChat(client, "[DEBUG] Auto-switching to newly stored weapon (enabled: %s)", 
                         g_cvAutoSwitch.BoolValue ? "yes" : "no");
@@ -997,10 +1012,16 @@ public Action Timer_ForceSwitchWeapon(Handle timer, DataPack pack)
     // For special weapons, we want to switch to the other primary regardless of current weapon
     if (forceSwitch) {
         if (g_PrimarySlot1[client].isValid || g_PrimarySlot2[client].isValid) {
-            if (g_cvDebugMode.BoolValue) {
-                PrintToChat(client, "[DEBUG] Force switching to other primary weapon");
+            if (g_IsMapTransitionActive) {
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Force switch suppressed during map transition");
+                }
+            } else {
+                if (g_cvDebugMode.BoolValue) {
+                    PrintToChat(client, "[DEBUG] Force switching to other primary weapon");
+                }
+                FakeClientCommand(client, "sm_switchprimary");
             }
-            FakeClientCommand(client, "sm_switchprimary");
         }
         return Plugin_Stop;
     }
@@ -1033,10 +1054,16 @@ public Action Timer_SwitchToOtherPrimary(Handle timer, any userid)
     
     // Only switch if we have a valid weapon in slot 1
     if (g_PrimarySlot1[client].isValid) {
-        if (g_cvDebugMode.BoolValue) {
-            PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 1");
+        if (g_IsMapTransitionActive) {
+            if (g_cvDebugMode.BoolValue) {
+                PrintToChat(client, "[DEBUG] Auto-switch suppressed during map transition");
+            }
+        } else {
+            if (g_cvDebugMode.BoolValue) {
+                PrintToChat(client, "[DEBUG] Auto-switching to primary weapon from slot 1");
+            }
+            FakeClientCommand(client, "sm_switchprimary");
         }
-        FakeClientCommand(client, "sm_switchprimary");
     }
     
     return Plugin_Stop;
@@ -1087,6 +1114,7 @@ public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 {
     // Reset cooldowns for all players at the start of a new round
     ResetCooldown();
+    g_IsMapTransitionActive = false;
     
     int currentTime = GetTime();
     
@@ -1138,22 +1166,27 @@ public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 
 public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 {
-    // No longer saving at round end - now done in real-time
+    g_IsMapTransitionActive = true;
+    if (g_cvDebugMode.BoolValue)
+        PrintToServer("[DualPrimaries] Round end detected - transition protection enabled");
 }
 
 public void Event_MapTransition(Event event, const char[] name, bool dontBroadcast)
 {
     // Reset cooldowns for all players during map transition
     ResetCooldown();
+    g_IsMapTransitionActive = true;
+    g_SawMapTransitionEvent = true;
     
     // We no longer need to set g_IsMapTransition since we use file existence instead
     g_IsCampaignRestart = false; // Reset campaign restart flag for map transitions
     if (g_cvDebugMode.BoolValue)
-        PrintToServer("[DualPrimaries] Map transition detected - reset cooldowns");
+        PrintToServer("[DualPrimaries] Map transition detected - reset cooldowns and disabled switching");
 }
 
 public void Event_FinaleWin(Event event, const char[] name, bool dontBroadcast)
 {
+    g_IsMapTransitionActive = true;
     // Clear weapon states and config file when campaign is completed
     DeleteConfigFile();
     if (g_cvDebugMode.BoolValue)
@@ -1164,6 +1197,7 @@ public void Event_MissionLost(Event event, const char[] name, bool dontBroadcast
 {
     // This is typically a wipe/restart scenario
     g_IsCampaignRestart = true;
+    g_IsMapTransitionActive = true;
     
     // Clear weapon states for all players when mission is lost
     for (int client = 1; client <= MaxClients; client++)
@@ -1172,12 +1206,25 @@ public void Event_MissionLost(Event event, const char[] name, bool dontBroadcast
         {
             ClearWeaponState(g_PrimarySlot1[client]);
             ClearWeaponState(g_PrimarySlot2[client]);
-            SavePlayerWeaponStateToConfig(client);
         }
     }
+    DeleteConfigFile();
     
     if (g_cvDebugMode.BoolValue)
         PrintToServer("[DualPrimaries] Mission lost - cleared all player weapon states and marked as campaign restart");
+}
+
+public void OnMapEnd()
+{
+    g_IsMapTransitionActive = true;
+    if (!g_SawMapTransitionEvent)
+    {
+        g_IsCampaignRestart = true;
+        DeleteConfigFile();
+        if (g_cvDebugMode.BoolValue)
+            PrintToServer("[DualPrimaries] Manual map change detected - cleared weapon states");
+    }
+    g_SawMapTransitionEvent = false;
 }
 
 public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
@@ -1247,6 +1294,23 @@ public Action Cmd_SwitchPrimary(int client, int args)
     if (!IsPlayerAlive(client))
     {
         ReplyToCommand(client, "[DualPrimaries] You must be alive to switch weapons.");
+        return Plugin_Handled;
+    }
+
+    if (g_IsMapTransitionActive)
+    {
+        if (client == 0)
+        {
+            PrintToServer("[DualPrimaries] Weapon switching is disabled during map transitions.");
+        }
+        else if (g_cvChatHints.BoolValue)
+        {
+            PrintToChat(client, "[DualPrimaries] Weapon switching is disabled during map transitions.");
+        }
+
+        if (g_cvDebugMode.BoolValue && client > 0)
+            PrintToChat(client, "[DEBUG] Switch command blocked due to map transition.");
+
         return Plugin_Handled;
     }
 
@@ -1456,6 +1520,23 @@ public Action Cmd_StorePrimary(int client, int args)
     if (!IsPlayerAlive(client))
     {
         ReplyToCommand(client, "[DualPrimaries] You must be alive to store weapons.");
+        return Plugin_Handled;
+    }
+
+    if (g_IsMapTransitionActive)
+    {
+        if (client == 0)
+        {
+            PrintToServer("[DualPrimaries] Weapon storage is disabled during map transitions.");
+        }
+        else if (g_cvChatHints.BoolValue)
+        {
+            PrintToChat(client, "[DualPrimaries] Weapon storage is disabled during map transitions.");
+        }
+
+        if (g_cvDebugMode.BoolValue && client > 0)
+            PrintToChat(client, "[DEBUG] Store command blocked due to map transition.");
+
         return Plugin_Handled;
     }
 
@@ -1832,6 +1913,9 @@ public Action Timer_LoadWeaponState(Handle timer, DataPack pack)
 
 void SavePlayerWeaponStateToConfig(int client)
 {
+    if (g_IsMapTransitionActive)
+        return;
+
     // Don't save weapon states for bots
     if (client <= 0 || !IsClientInGame(client) || IsFakeClient(client))
         return;
